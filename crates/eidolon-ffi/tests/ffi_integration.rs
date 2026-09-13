@@ -275,6 +275,58 @@ fn test_c_abi_client_lifecycle_and_events() {
     let action_res = eidolon_client_send_action(handle, 1, 9001, 100);
     assert_eq!(action_res, EIDOLON_OK);
 
-    // 12. Clean destruction
+    // 12. Test Density Profile and Time Dilation via C ABI
+    assert_eq!(
+        eidolon_client_get_density_profile(handle),
+        EIDOLON_DENSITY_STANDARD_MMO
+    );
+    assert_eq!(
+        eidolon_client_set_density_profile(handle, EIDOLON_DENSITY_MASSIVE_FLEET_OR_SIEGE),
+        EIDOLON_OK
+    );
+    assert_eq!(
+        eidolon_client_get_density_profile(handle),
+        EIDOLON_DENSITY_MASSIVE_FLEET_OR_SIEGE
+    );
+
+    // Initial time dilation is 1.0
+    assert!((eidolon_client_get_time_dilation(handle) - 1.0).abs() < 1e-4);
+
+    // Server sends Time Dilation packet (opcode 9) with factor 0.5 (Q32.32 = 0.5 * 2^32 = 2147483648)
+    let mut tidi_packet = [0u8; HEADER_SIZE + 9];
+    let tidi_hdr = PacketHeader::new(
+        ChannelType::ReliableOrdered,
+        PacketType::ReliableMessage,
+        4,
+        12345,
+        0,
+    );
+    let tidi_hdr_len = tidi_hdr.write_to(&mut tidi_packet[..HEADER_SIZE]).unwrap();
+    tidi_packet[tidi_hdr_len] = 9; // Opcode 9 = time dilation
+    let factor_raw: i64 = 2147483648; // 0.5 in Q32.32
+    tidi_packet[tidi_hdr_len + 1..tidi_hdr_len + 9].copy_from_slice(&factor_raw.to_be_bytes());
+
+    server_socket
+        .send_to(&tidi_packet[..tidi_hdr_len + 9], client_addr)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+
+    eidolon_client_poll_events(
+        handle,
+        Some(test_c_callback),
+        &mut cb_data as *mut _ as *mut c_void,
+    );
+
+    assert!(cb_data
+        .events_received
+        .iter()
+        .any(|e| e.event_type == EIDOLON_EVENT_TIME_DILATION_CHANGED));
+    assert!((eidolon_client_get_time_dilation(handle) - 0.5).abs() < 1e-4);
+
+    // Test explicit client-side time dilation override
+    assert_eq!(eidolon_client_set_time_dilation(handle, 0.25), EIDOLON_OK);
+    assert!((eidolon_client_get_time_dilation(handle) - 0.25).abs() < 1e-4);
+
+    // 13. Clean destruction
     eidolon_client_destroy(handle);
 }

@@ -168,6 +168,34 @@ public:
     }
 
     /**
+     * Sets the client density profile preference (0 = Mobile, 1 = Standard MMO, 2 = Massive Fleet/Siege).
+     */
+    bool set_density_profile(uint32_t profile) {
+        return eidolon_client_set_density_profile(m_handle.get(), profile) == EIDOLON_OK;
+    }
+
+    /**
+     * Returns the current client density profile setting.
+     */
+    uint32_t get_density_profile() const {
+        return eidolon_client_get_density_profile(m_handle.get());
+    }
+
+    /**
+     * Returns the active server-mandated Time Dilation (TiDi) factor (1.0 = full speed, <1.0 = dilated).
+     */
+    float get_time_dilation() const {
+        return eidolon_client_get_time_dilation(m_handle.get());
+    }
+
+    /**
+     * Explicitly sets the client-side time dilation factor.
+     */
+    bool set_time_dilation(float time_dilation) {
+        return eidolon_client_set_time_dilation(m_handle.get(), time_dilation) == EIDOLON_OK;
+    }
+
+    /**
      * Returns the raw unmanaged handle for custom extensions.
      */
     EidolonClientHandle* raw_handle() const {

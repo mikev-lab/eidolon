@@ -14,6 +14,7 @@ pub mod channel;
 pub mod crypto;
 pub mod error;
 pub mod fuzz;
+pub mod governor;
 pub mod impairment;
 pub mod packet;
 pub mod pcap;
@@ -42,6 +43,7 @@ pub use channel::{
 pub use crypto::{constant_time_eq, hmac_sha256, sha256, CryptoProvider, NativeCryptoProvider};
 pub use error::{BitstreamError, NetError};
 pub use fuzz::{FuzzStrategy, PacketFuzzGenerator};
+pub use governor::{BandwidthGovernor, ClientTokenBucket, DensityProfile};
 pub use impairment::{
     DelayedPacket, FastPrng, ImpairmentConfig, ImpairmentMetrics, ImpairmentOutcome,
     NetworkImpairmentHarness,

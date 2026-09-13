@@ -11,16 +11,21 @@ pub mod grid;
 pub mod tier;
 
 pub use aoi::{
-    AoIScheduler, LoadSheddingLevel, ObserverInterestSet, VisibilityEvent, MAX_AOI_RADIUS_METERS,
-    MAX_AOI_RADIUS_SQ,
+    calculate_relevance_score, AoIScheduler, EntityRelation, LoadSheddingLevel,
+    ObserverInterestSet, RelevanceWeights, VisibilityEvent, MAX_AOI_5TIER_RADIUS_SQ,
+    MAX_AOI_RADIUS_METERS, MAX_AOI_RADIUS_SQ,
 };
 pub use grid::{
     CellCoord, SpatialError, SpatialHashGrid, SpatialQueryResult, CELL_HORIZONTAL_SIZE,
     CELL_VERTICAL_SIZE,
 };
 pub use tier::{
-    FrequencyTier, IMMEDIATE_DEMOTION_DIST_SQ, IMMEDIATE_PROMOTION_DIST_SQ, MID_DEMOTION_DIST_SQ,
-    MID_PROMOTION_DIST_SQ,
+    FrequencyTier, TierModel, IMMEDIATE_DEMOTION_DIST_SQ, IMMEDIATE_PROMOTION_DIST_SQ,
+    MID_DEMOTION_DIST_SQ, MID_PROMOTION_DIST_SQ, TIER5_HORIZON_DEMOTION_DIST_SQ,
+    TIER5_HORIZON_PROMOTION_DIST_SQ, TIER5_IMMEDIATE_DEMOTION_DIST_SQ,
+    TIER5_IMMEDIATE_PROMOTION_DIST_SQ, TIER5_MIDFIELD_DEMOTION_DIST_SQ,
+    TIER5_MIDFIELD_PROMOTION_DIST_SQ, TIER5_TACTICAL_DEMOTION_DIST_SQ,
+    TIER5_TACTICAL_PROMOTION_DIST_SQ,
 };
 
 #[cfg(test)]
@@ -251,5 +256,128 @@ mod tests {
         let res_large =
             grid.query_radius_squared(center, Fixed64::from_i32(160 * 160), &mut buffer);
         assert_eq!(res_large.written, 2);
+    }
+
+    #[test]
+    fn test_continuous_5tier_classification_and_payload_sizes() {
+        assert_eq!(FrequencyTier::Immediate.payload_size_bytes(), 7);
+        assert_eq!(FrequencyTier::Tactical.payload_size_bytes(), 7);
+        assert_eq!(FrequencyTier::Mid.payload_size_bytes(), 5);
+        assert_eq!(FrequencyTier::Midfield.payload_size_bytes(), 5);
+        assert_eq!(FrequencyTier::Horizon.payload_size_bytes(), 4);
+        assert_eq!(FrequencyTier::Macro.payload_size_bytes(), 2);
+
+        // Initial classification
+        assert_eq!(
+            FrequencyTier::classify_5tier(Fixed64::from_i32(100)),
+            FrequencyTier::Immediate
+        );
+        assert_eq!(
+            FrequencyTier::classify_5tier(Fixed64::from_i32(400)),
+            FrequencyTier::Tactical
+        );
+        assert_eq!(
+            FrequencyTier::classify_5tier(Fixed64::from_i32(2500)),
+            FrequencyTier::Midfield
+        );
+        assert_eq!(
+            FrequencyTier::classify_5tier(Fixed64::from_i32(40000)),
+            FrequencyTier::Horizon
+        );
+        assert_eq!(
+            FrequencyTier::classify_5tier(Fixed64::from_i32(100000)),
+            FrequencyTier::Macro
+        );
+
+        // 5-tier hysteresis: loitering in deadbands
+        let immediate = FrequencyTier::Immediate;
+        // 15m squared = 225 (within [196, 256] deadband)
+        assert_eq!(
+            immediate.update_5tier_with_hysteresis(Fixed64::from_i32(225)),
+            FrequencyTier::Immediate
+        );
+        // Exceeds 256: demotes to Tactical
+        let tactical = immediate.update_5tier_with_hysteresis(Fixed64::from_i32(300));
+        assert_eq!(tactical, FrequencyTier::Tactical);
+        // Drops below 196: promotes to Immediate
+        assert_eq!(
+            tactical.update_5tier_with_hysteresis(Fixed64::from_i32(180)),
+            FrequencyTier::Immediate
+        );
+    }
+
+    #[test]
+    fn test_priority_relevance_ranking() {
+        let mut grid = SpatialHashGrid::with_capacity(20, 64);
+        let obs_pos = Vec3Fix::ZERO;
+
+        // Entity 1: at 10m, neutral
+        assert!(grid.insert(1, Vec3Fix::from_f64(10.0, 0.0, 0.0)).is_ok());
+        // Entity 2: at 20m, targeted focus
+        assert!(grid.insert(2, Vec3Fix::from_f64(20.0, 0.0, 0.0)).is_ok());
+        // Entity 3: at 30m, party member
+        assert!(grid.insert(3, Vec3Fix::from_f64(30.0, 0.0, 0.0)).is_ok());
+
+        let mut interest_set = ObserverInterestSet::with_capacity(2);
+        interest_set.set_tier_model(TierModel::Continuous5Tier);
+
+        let candidates = [1, 2, 3];
+        let mut events = [VisibilityEvent::Exit { entity_id: 0 }; 8];
+
+        let count = interest_set.update_visibility_ranked(
+            &grid,
+            obs_pos,
+            &candidates,
+            |id| match id {
+                2 => EntityRelation {
+                    is_target: true,
+                    ..Default::default()
+                },
+                3 => EntityRelation {
+                    is_party: true,
+                    ..Default::default()
+                },
+                _ => EntityRelation::default(),
+            },
+            &mut events,
+        );
+
+        assert_eq!(count, 2);
+        let visible = interest_set.visible_entities();
+        // Since interest_set capacity is 2, the targeted entity (2) and party member (3) must be retained
+        // while the closer neutral entity (1) is deprioritized
+        assert!(visible.contains(&2));
+        assert!(visible.contains(&3));
+        assert!(!visible.contains(&1));
+    }
+
+    #[test]
+    fn test_query_radius_morton_parity() {
+        let mut grid = SpatialHashGrid::with_capacity(100, 64);
+        let center = Vec3Fix::from_f64(30.0, 10.0, 30.0);
+
+        for id in 1..=30 {
+            let offset = (id as f64) * 2.0;
+            let pos = Vec3Fix::from_f64(30.0 + offset, 10.0, 30.0);
+            assert!(grid.insert(id, pos).is_ok());
+            assert!(grid.get_morton_code(id).is_some());
+        }
+
+        let radius_sq = Fixed64::from_i32(400); // 20m radius
+
+        let mut regular_buf = [0u32; 32];
+        let mut morton_buf = [0u32; 32];
+
+        let regular_res = grid.query_radius_squared(center, radius_sq, &mut regular_buf);
+        let morton_res = grid.query_radius_morton(center, radius_sq, &mut morton_buf);
+
+        assert_eq!(regular_res.written, morton_res.written);
+        assert_eq!(regular_res.total_matches, morton_res.total_matches);
+
+        let mut reg_sorted = regular_buf[..regular_res.written].to_vec();
+        let mut mor_sorted = morton_buf[..morton_res.written].to_vec();
+        reg_sorted.sort_unstable();
+        mor_sorted.sort_unstable();
+        assert_eq!(reg_sorted, mor_sorted);
     }
 }

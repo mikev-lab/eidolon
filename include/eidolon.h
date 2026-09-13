@@ -45,6 +45,15 @@ extern "C" {
 #define EIDOLON_EVENT_CHAT_MESSAGE   11
 #define EIDOLON_EVENT_EQUIPMENT_CHANGED 12
 #define EIDOLON_EVENT_PARTY_UPDATED  13
+#define EIDOLON_EVENT_TIME_DILATION_CHANGED 14
+
+/* ========================================================================= */
+/* Density Profiles                                                          */
+/* ========================================================================= */
+
+#define EIDOLON_DENSITY_BUDGET_MOBILE         0
+#define EIDOLON_DENSITY_STANDARD_MMO          1
+#define EIDOLON_DENSITY_MASSIVE_FLEET_OR_SIEGE 2
 
 /* ========================================================================= */
 /* Data Structures                                                           */
@@ -285,6 +294,46 @@ uint32_t eidolon_client_get_visible_entities(
  * @return 1 if connected, 0 otherwise.
  */
 int32_t eidolon_client_is_connected(EidolonClientHandle* handle);
+
+/**
+ * Sets the client density profile preference (0 = Mobile, 1 = Standard MMO, 2 = Massive Fleet/Siege).
+ *
+ * @param handle Valid client handle.
+ * @param profile Density profile identifier.
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_set_density_profile(
+    EidolonClientHandle* handle,
+    uint32_t profile
+);
+
+/**
+ * Returns the current client density profile setting.
+ *
+ * @param handle Valid client handle.
+ * @return Density profile identifier.
+ */
+uint32_t eidolon_client_get_density_profile(EidolonClientHandle* handle);
+
+/**
+ * Returns the active server-mandated Time Dilation (TiDi) factor (1.0 = full speed, <1.0 = dilated).
+ *
+ * @param handle Valid client handle.
+ * @return Time dilation scale factor.
+ */
+float eidolon_client_get_time_dilation(EidolonClientHandle* handle);
+
+/**
+ * Explicitly sets the client-side time dilation factor.
+ *
+ * @param handle Valid client handle.
+ * @param time_dilation Desired time dilation factor.
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_set_time_dilation(
+    EidolonClientHandle* handle,
+    float time_dilation
+);
 
 #ifdef __cplusplus
 }

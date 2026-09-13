@@ -17,8 +17,10 @@ use eidolon_net::auth::{
     ConnectFinalizeResponse, CHALLENGE_REQ_LEN, FINALIZE_REQ_LEN, NONCE_LEN,
 };
 use eidolon_net::error::NetError;
+use eidolon_net::governor::{BandwidthGovernor, DensityProfile};
 use eidolon_net::packet::PacketHeader;
 use eidolon_net::protocol::{ChannelType, PacketType, HEADER_SIZE, MAX_PACKET_SIZE};
+use eidolon_spatial::tier::FrequencyTier;
 use eidolon_spatial::SpatialHashGrid;
 use eidolon_world::ability::{get_ability_definition, AbilityShape, CastState, CooldownTracker};
 use eidolon_world::chat::{ChatChannel, ChatRateLimiter};
@@ -119,6 +121,7 @@ pub struct EidolonAppBuilder {
     max_entities: usize,
     wal_path: Option<PathBuf>,
     server_secret: [u8; 32],
+    density_profile: DensityProfile,
 }
 
 impl EidolonAppBuilder {
@@ -129,6 +132,7 @@ impl EidolonAppBuilder {
             max_entities: 2048,
             wal_path: None,
             server_secret: [0x42; 32],
+            density_profile: DensityProfile::StandardMMO,
         }
     }
 
@@ -159,6 +163,12 @@ impl EidolonAppBuilder {
         self
     }
 
+    /// Sets the network density profile and per-client bandwidth budget.
+    pub fn density_profile(mut self, profile: DensityProfile) -> Self {
+        self.density_profile = profile;
+        self
+    }
+
     /// Builds and initializes the authoritative `EidolonApp`.
     pub fn build(self) -> Result<EidolonApp, AppError> {
         let bind_addr = self
@@ -174,6 +184,8 @@ impl EidolonAppBuilder {
             None => None,
         };
 
+        let bandwidth_governor = BandwidthGovernor::new(self.max_entities, self.density_profile);
+
         Ok(EidolonApp {
             socket,
             entities: HashMap::new(),
@@ -186,6 +198,9 @@ impl EidolonAppBuilder {
             packet_buf: [0u8; MAX_PACKET_SIZE],
             chat_limiter: ChatRateLimiter::new(10, 20),
             party_manager: PartyManager::new(),
+            density_profile: self.density_profile,
+            bandwidth_governor,
+            time_dilation: Fixed64::ONE,
         })
     }
 }
@@ -209,6 +224,9 @@ pub struct EidolonApp {
     packet_buf: [u8; MAX_PACKET_SIZE],
     chat_limiter: ChatRateLimiter,
     party_manager: PartyManager,
+    density_profile: DensityProfile,
+    bandwidth_governor: BandwidthGovernor,
+    time_dilation: Fixed64,
 }
 
 impl EidolonApp {
@@ -235,6 +253,51 @@ impl EidolonApp {
     /// Returns a mutable reference to the party manager.
     pub fn party_manager_mut(&mut self) -> &mut PartyManager {
         &mut self.party_manager
+    }
+
+    /// Configures the active network density profile and updates the bandwidth governor.
+    pub fn set_density_profile(&mut self, profile: DensityProfile) {
+        self.density_profile = profile;
+        self.bandwidth_governor.set_profile(profile);
+    }
+
+    /// Returns the active network density profile.
+    pub fn density_profile(&self) -> DensityProfile {
+        self.density_profile
+    }
+
+    /// Returns a reference to the bandwidth governor.
+    pub fn bandwidth_governor(&self) -> &BandwidthGovernor {
+        &self.bandwidth_governor
+    }
+
+    /// Returns a mutable reference to the bandwidth governor.
+    pub fn bandwidth_governor_mut(&mut self) -> &mut BandwidthGovernor {
+        &mut self.bandwidth_governor
+    }
+
+    /// Configures the authoritative time dilation factor (clamped to [0.1, 1.0]).
+    pub fn set_time_dilation(&mut self, factor: Fixed64) {
+        let clamped = factor.clamp(Fixed64::from_f64(0.1), Fixed64::ONE);
+        self.time_dilation = clamped;
+        self.broadcast_time_dilation(clamped);
+    }
+
+    /// Returns the active authoritative time dilation factor.
+    pub fn time_dilation(&self) -> Fixed64 {
+        self.time_dilation
+    }
+
+    fn broadcast_time_dilation(&self, factor: Fixed64) {
+        let mut payload = [0u8; 9];
+        payload[0] = 9; // TimeDilationChanged
+        payload[1..9].copy_from_slice(&factor.raw().to_be_bytes());
+
+        for entity in self.entities.values() {
+            if let Some(peer) = entity.peer_addr {
+                self.send_reliable_event_to_peer(peer, &payload);
+            }
+        }
     }
 
     /// Returns the local socket address this server is listening on.
@@ -320,6 +383,7 @@ impl EidolonApp {
 
         let _ = self.spatial_grid.insert(entity_id, pos);
         self.entities.insert(entity_id, entity);
+        self.bandwidth_governor.register_client(entity_id);
         Ok(())
     }
 
@@ -327,6 +391,12 @@ impl EidolonApp {
     pub fn despawn_entity(&mut self, entity_id: u32) {
         let _ = self.spatial_grid.remove(entity_id);
         self.entities.remove(&entity_id);
+        self.bandwidth_governor.unregister_client(entity_id);
+    }
+
+    /// Returns a reference to all active entities in the world.
+    pub fn entities(&self) -> &HashMap<u32, ServerEntity> {
+        &self.entities
     }
 
     /// Returns a reference to a specific entity.
@@ -1147,22 +1217,29 @@ impl EidolonApp {
     }
 
     fn broadcast_aoi_updates(&mut self) {
+        // Replenish bandwidth governor tokens for this tick
+        self.bandwidth_governor.tick();
+
         let observers: Vec<(u32, SocketAddr, Vec3Fix)> = self
             .entities
             .values()
             .filter_map(|e| e.peer_addr.map(|addr| (e.id, addr, e.position)))
             .collect();
 
-        let mut query_buf = [0u32; 128];
-        for (_player_id, peer_addr, pos) in observers {
-            let query_res = self.spatial_grid.query_radius_squared(
-                pos,
-                Fixed64::from_i32(2500),
-                &mut query_buf,
-            );
+        let mut query_buf = [0u32; 2048];
+        for (player_id, peer_addr, pos) in observers {
+            let max_r_sq = if self.density_profile == DensityProfile::BudgetMobile {
+                Fixed64::from_i32(2500)
+            } else {
+                Fixed64::from_i32(90000)
+            };
+
+            let query_res = self
+                .spatial_grid
+                .query_radius_morton(pos, max_r_sq, &mut query_buf);
 
             let mut out_packet = [0u8; MAX_PACKET_SIZE];
-            let header = PacketHeader::new(
+            let mut header = PacketHeader::new(
                 ChannelType::UnreliableSequenced,
                 PacketType::StateUpdate,
                 self.current_tick as u16,
@@ -1175,8 +1252,34 @@ impl EidolonApp {
 
                 for &visible_id in &query_buf[..query_res.written] {
                     if let Some(target) = self.entities.get(&visible_id) {
-                        if p_idx + 22 > MAX_PACKET_SIZE {
-                            break;
+                        let dist_sq = pos.distance_squared(target.position);
+                        let tier = FrequencyTier::classify_5tier(dist_sq);
+                        let tier_idx = tier as u8;
+                        const RECORD_LEN: usize = 22;
+
+                        if !self
+                            .bandwidth_governor
+                            .should_admit_tier(player_id, tier_idx, RECORD_LEN)
+                        {
+                            continue;
+                        }
+
+                        if p_idx + RECORD_LEN > MAX_PACKET_SIZE {
+                            if p_idx > hdr_len {
+                                let sent_len = p_idx;
+                                if self.bandwidth_governor.consume(player_id, sent_len) {
+                                    let _ = self.socket.send_to(&out_packet[..sent_len], peer_addr);
+                                }
+                            }
+                            if !self
+                                .bandwidth_governor
+                                .can_send(player_id, hdr_len + RECORD_LEN)
+                            {
+                                break;
+                            }
+                            header.sequence = header.sequence.wrapping_add(1);
+                            let _ = header.write_to(&mut out_packet[..HEADER_SIZE]);
+                            p_idx = hdr_len;
                         }
 
                         let (cx, cy, cz, q_coord) =
@@ -1211,7 +1314,10 @@ impl EidolonApp {
                 }
 
                 if p_idx > hdr_len {
-                    let _ = self.socket.send_to(&out_packet[..p_idx], peer_addr);
+                    let sent_len = p_idx;
+                    if self.bandwidth_governor.consume(player_id, sent_len) {
+                        let _ = self.socket.send_to(&out_packet[..sent_len], peer_addr);
+                    }
                 }
             }
         }

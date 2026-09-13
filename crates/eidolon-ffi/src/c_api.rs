@@ -8,16 +8,19 @@ use eidolon_client::{ClientConfig, ClientEvent, EidolonClient};
 use eidolon_core::identity::{AccountId, SessionTicket};
 
 use crate::types::{
-    EidolonEvent, EidolonTransform, EIDOLON_EVENT_CAST_COMPLETED, EIDOLON_EVENT_CAST_INTERRUPTED,
-    EIDOLON_EVENT_CAST_STARTED, EIDOLON_EVENT_CHAT_MESSAGE, EIDOLON_EVENT_COMBAT_ACTION,
-    EIDOLON_EVENT_CONNECTED, EIDOLON_EVENT_DISCONNECTED, EIDOLON_EVENT_ENTITY_DESPAWNED,
-    EIDOLON_EVENT_ENTITY_SPAWNED, EIDOLON_EVENT_ENTITY_UPDATED, EIDOLON_EVENT_EQUIPMENT_CHANGED,
-    EIDOLON_EVENT_LOOT_ACQUIRED, EIDOLON_EVENT_PARTY_UPDATED,
+    EidolonEvent, EidolonTransform, EIDOLON_DENSITY_STANDARD_MMO, EIDOLON_EVENT_CAST_COMPLETED,
+    EIDOLON_EVENT_CAST_INTERRUPTED, EIDOLON_EVENT_CAST_STARTED, EIDOLON_EVENT_CHAT_MESSAGE,
+    EIDOLON_EVENT_COMBAT_ACTION, EIDOLON_EVENT_CONNECTED, EIDOLON_EVENT_DISCONNECTED,
+    EIDOLON_EVENT_ENTITY_DESPAWNED, EIDOLON_EVENT_ENTITY_SPAWNED, EIDOLON_EVENT_ENTITY_UPDATED,
+    EIDOLON_EVENT_EQUIPMENT_CHANGED, EIDOLON_EVENT_LOOT_ACQUIRED, EIDOLON_EVENT_PARTY_UPDATED,
+    EIDOLON_EVENT_TIME_DILATION_CHANGED,
 };
 
 /// Opaque handle representing an `EidolonClient` instance across the C ABI.
 pub struct EidolonClientHandle {
     client: Option<EidolonClient>,
+    density_profile: u32,
+    time_dilation: f32,
 }
 
 /// Callback function signature invoked for each polled event.
@@ -45,7 +48,11 @@ pub const EIDOLON_ERR_ENTITY_NOT_FOUND: i32 = -6;
 #[no_mangle]
 pub extern "C" fn eidolon_client_create() -> *mut EidolonClientHandle {
     let result = catch_unwind(|| {
-        let handle = Box::new(EidolonClientHandle { client: None });
+        let handle = Box::new(EidolonClientHandle {
+            client: None,
+            density_profile: EIDOLON_DENSITY_STANDARD_MMO,
+            time_dilation: 1.0,
+        });
         Box::into_raw(handle)
     });
 
@@ -367,6 +374,20 @@ pub extern "C" fn eidolon_client_poll_events(
                         param1: party_id,
                         param2: (leader_account_id << 8) | (member_count as u64),
                     },
+                    ClientEvent::TimeDilationChanged { time_dilation } => {
+                        handle_ref.time_dilation = time_dilation;
+                        let factor_raw = (time_dilation as f64 * 4294967296.0) as u64;
+                        EidolonEvent {
+                            event_type: EIDOLON_EVENT_TIME_DILATION_CHANGED,
+                            entity_id: 0,
+                            x: 0.0,
+                            y: 0.0,
+                            z: 0.0,
+                            yaw_degrees: 0.0,
+                            param1: factor_raw,
+                            param2: 0,
+                        }
+                    }
                 };
 
                 // SAFETY: `cb` is a valid C function pointer provided by the caller; `user_data` is passed through untouched.
@@ -704,4 +725,84 @@ pub extern "C" fn eidolon_client_is_connected(handle: *mut EidolonClientHandle) 
     });
 
     result.unwrap_or(0)
+}
+
+/// Sets the client density profile preference (0 = Mobile, 1 = Standard MMO, 2 = Massive Fleet/Siege).
+#[no_mangle]
+pub extern "C" fn eidolon_client_set_density_profile(
+    handle: *mut EidolonClientHandle,
+    profile: u32,
+) -> i32 {
+    if handle.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` was verified non-null above.
+        let handle_ref = unsafe { &mut *handle };
+        handle_ref.density_profile = profile;
+        EIDOLON_OK
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
+}
+
+/// Returns the current client density profile setting.
+#[no_mangle]
+pub extern "C" fn eidolon_client_get_density_profile(handle: *mut EidolonClientHandle) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` was verified non-null above.
+        let handle_ref = unsafe { &*handle };
+        handle_ref.density_profile
+    });
+
+    result.unwrap_or(0)
+}
+
+/// Returns the active server-mandated Time Dilation (TiDi) factor (1.0 = full speed, <1.0 = dilated).
+#[no_mangle]
+pub extern "C" fn eidolon_client_get_time_dilation(handle: *mut EidolonClientHandle) -> f32 {
+    if handle.is_null() {
+        return 1.0;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` was verified non-null above.
+        let handle_ref = unsafe { &*handle };
+        if let Some(ref client) = handle_ref.client {
+            client.time_dilation()
+        } else {
+            handle_ref.time_dilation
+        }
+    });
+
+    result.unwrap_or(1.0)
+}
+
+/// Explicitly sets the client-side time dilation factor.
+#[no_mangle]
+pub extern "C" fn eidolon_client_set_time_dilation(
+    handle: *mut EidolonClientHandle,
+    time_dilation: f32,
+) -> i32 {
+    if handle.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` was verified non-null above.
+        let handle_ref = unsafe { &mut *handle };
+        let clamped = time_dilation.clamp(0.01, 1.0);
+        handle_ref.time_dilation = clamped;
+        if let Some(ref mut client) = handle_ref.client {
+            client.set_time_dilation(clamped);
+        }
+        EIDOLON_OK
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
 }

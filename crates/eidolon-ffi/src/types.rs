@@ -77,3 +77,12 @@ pub const EIDOLON_EVENT_CHAT_MESSAGE: u32 = 11;
 pub const EIDOLON_EVENT_EQUIPMENT_CHANGED: u32 = 12;
 /// Event type constant: Party membership or vitals updated.
 pub const EIDOLON_EVENT_PARTY_UPDATED: u32 = 13;
+/// Event type constant: Time dilation (TiDi) factor changed by server (param1 = fixed-point Q32.32 factor).
+pub const EIDOLON_EVENT_TIME_DILATION_CHANGED: u32 = 14;
+
+/// Density profile constant: Ultra-low bandwidth mobile / constrained network (1.2 KB/s budget).
+pub const EIDOLON_DENSITY_BUDGET_MOBILE: u32 = 0;
+/// Density profile constant: Balanced standard MMO experience (2.5 KB/s budget).
+pub const EIDOLON_DENSITY_STANDARD_MMO: u32 = 1;
+/// Density profile constant: Massive fleet battle or siege mode (4.5 KB/s budget).
+pub const EIDOLON_DENSITY_MASSIVE_FLEET_OR_SIEGE: u32 = 2;

@@ -129,4 +129,9 @@ pub enum ClientEvent {
         /// Current number of members in the party.
         member_count: u8,
     },
+    /// Authoritative server time dilation factor updated.
+    TimeDilationChanged {
+        /// Time dilation scaling factor (1.0 = normal real-time, 0.1 to 0.9 = dilated).
+        time_dilation: f32,
+    },
 }

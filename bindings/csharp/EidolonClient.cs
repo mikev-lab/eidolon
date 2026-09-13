@@ -42,6 +42,16 @@ namespace Eidolon
     }
 
     /// <summary>
+    /// Egress bandwidth density profiles.
+    /// </summary>
+    public static class EidolonDensityProfile
+    {
+        public const uint BudgetMobile = 0;
+        public const uint StandardMMO = 1;
+        public const uint MassiveFleetOrSiege = 2;
+    }
+
+    /// <summary>
     /// High-level managed wrapper around native libeidolon client instance.
     /// </summary>
     public class EidolonClient : IDisposable
@@ -150,6 +160,18 @@ namespace Eidolon
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         private static extern int eidolon_client_is_connected(IntPtr handle);
 
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int eidolon_client_set_density_profile(IntPtr handle, uint profile);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern uint eidolon_client_get_density_profile(IntPtr handle);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern float eidolon_client_get_time_dilation(IntPtr handle);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int eidolon_client_set_time_dilation(IntPtr handle, float timeDilation);
+
         private IntPtr _handle;
         private readonly NativeEventCallback _callbackDelegate;
         private bool _disposed;
@@ -168,8 +190,31 @@ namespace Eidolon
         public event Action<byte, uint> OnChatMessage;
         public event Action<uint, byte, uint> OnEquipmentChanged;
         public event Action<ulong, ulong, byte> OnPartyUpdated;
+        public event Action<float> OnTimeDilationChanged;
 
         public bool IsConnected => _handle != IntPtr.Zero && eidolon_client_is_connected(_handle) == 1;
+
+        public float TimeDilation => _handle != IntPtr.Zero ? eidolon_client_get_time_dilation(_handle) : 1.0f;
+
+        public uint DensityProfile
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return eidolon_client_get_density_profile(_handle);
+            }
+            set
+            {
+                ThrowIfDisposed();
+                eidolon_client_set_density_profile(_handle, value);
+            }
+        }
+
+        public bool SetTimeDilation(float timeDilation)
+        {
+            ThrowIfDisposed();
+            return eidolon_client_set_time_dilation(_handle, timeDilation) == 0;
+        }
 
         public EidolonClient()
         {
@@ -315,6 +360,10 @@ namespace Eidolon
                     ulong leaderId = evt.Param2 >> 8;
                     byte memberCount = (byte)(evt.Param2 & 0xFF);
                     OnPartyUpdated?.Invoke(evt.Param1, leaderId, memberCount);
+                    break;
+                case 14: // TimeDilationChanged
+                    float timeDilation = (float)(evt.Param1 / 4294967296.0);
+                    OnTimeDilationChanged?.Invoke(timeDilation);
                     break;
             }
         }

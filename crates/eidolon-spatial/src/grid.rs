@@ -5,6 +5,7 @@
 
 use core::fmt;
 use eidolon_core::fixed::{Fixed64, Vec3Fix};
+use eidolon_core::morton::morton_encode_vec3;
 
 /// Horizontal spatial cell size in meters (64 meters).
 pub const CELL_HORIZONTAL_SIZE: i32 = 64;
@@ -129,6 +130,7 @@ pub struct SpatialHashGrid {
     positions: Vec<Vec3Fix>,
     cell_coords: Vec<CellCoord>,
     entity_keys: Vec<u64>,
+    morton_codes: Vec<u64>,
     active_mask: Vec<bool>,
     next_in_cell: Vec<u32>,
     prev_in_cell: Vec<u32>,
@@ -158,6 +160,7 @@ impl SpatialHashGrid {
             positions: vec![Vec3Fix::ZERO; max_entities],
             cell_coords: vec![CellCoord::default(); max_entities],
             entity_keys: vec![0; max_entities],
+            morton_codes: vec![0; max_entities],
             active_mask: vec![false; max_entities],
             next_in_cell: vec![TERMINAL_INDEX; max_entities],
             prev_in_cell: vec![TERMINAL_INDEX; max_entities],
@@ -235,6 +238,7 @@ impl SpatialHashGrid {
         self.positions[id] = position;
         self.cell_coords[id] = cell;
         self.entity_keys[id] = key;
+        self.morton_codes[id] = morton_encode_vec3(position);
         self.active_mask[id] = true;
 
         // Prepend to bucket intrusive list
@@ -266,6 +270,7 @@ impl SpatialHashGrid {
         }
 
         self.positions[id] = new_position;
+        self.morton_codes[id] = morton_encode_vec3(new_position);
         let new_cell = CellCoord::from_position(new_position);
 
         // Fast path: entity remained within the same cell bucket
@@ -301,6 +306,7 @@ impl SpatialHashGrid {
 
         self.detach_from_bucket(entity_id, bucket);
         self.active_mask[id] = false;
+        self.morton_codes[id] = 0;
         self.next_in_cell[id] = TERMINAL_INDEX;
         self.prev_in_cell[id] = TERMINAL_INDEX;
         self.active_count -= 1;
@@ -429,6 +435,110 @@ impl SpatialHashGrid {
         }
 
         // Process remaining tail candidates
+        if batch_len > 0 {
+            batch_positions[batch_len..4].fill(center);
+            let dists = Vec3Fix::batch_distance_squared_4x(batch_positions, center);
+            for i in 0..batch_len {
+                if dists[i] <= radius_sq {
+                    if matched_count < output_buffer.len() {
+                        output_buffer[matched_count] = batch_candidates[i];
+                    }
+                    matched_count += 1;
+                }
+            }
+        }
+
+        SpatialQueryResult::new(matched_count.min(output_buffer.len()), matched_count)
+    }
+
+    /// Returns the 64-bit Morton (Z-order) code of an active entity, or None if not found.
+    #[inline]
+    pub fn get_morton_code(&self, entity_id: u32) -> Option<u64> {
+        let id = entity_id as usize;
+        if id < self.max_entities && self.active_mask[id] {
+            Some(self.morton_codes[id])
+        } else {
+            None
+        }
+    }
+
+    /// Queries active entities within a squared radius of the center point using 64-bit Morton code acceleration
+    /// and 4-wide SIMD distance batching.
+    ///
+    /// Filters entities using space-filling curve bounds before evaluating Euclidean distances in SIMD batches.
+    pub fn query_radius_morton(
+        &self,
+        center: Vec3Fix,
+        radius_sq: Fixed64,
+        output_buffer: &mut [u32],
+    ) -> SpatialQueryResult {
+        let center_cell = CellCoord::from_position(center);
+        let mut matched_count = 0;
+        let r_fixed = radius_sq.sqrt();
+        let max_dx = (r_fixed.saturating_div(Fixed64::from_i32(CELL_HORIZONTAL_SIZE)))
+            .ceil()
+            .to_i32()
+            .max(1);
+        let max_dy = (r_fixed.saturating_div(Fixed64::from_i32(CELL_VERTICAL_SIZE)))
+            .ceil()
+            .to_i32()
+            .max(1);
+        let max_dz = max_dx;
+
+        let min_pos = Vec3Fix::new(center.x - r_fixed, center.y - r_fixed, center.z - r_fixed);
+        let max_pos = Vec3Fix::new(center.x + r_fixed, center.y + r_fixed, center.z + r_fixed);
+        let min_morton = morton_encode_vec3(min_pos);
+        let max_morton = morton_encode_vec3(max_pos);
+        let (lo_morton, hi_morton) = if min_morton <= max_morton {
+            (min_morton, max_morton)
+        } else {
+            (max_morton, min_morton)
+        };
+
+        let mut batch_candidates = [0u32; 4];
+        let mut batch_positions = [Vec3Fix::ZERO; 4];
+        let mut batch_len = 0;
+
+        for dx in -max_dx..=max_dx {
+            for dz in -max_dz..=max_dz {
+                for dy in -max_dy..=max_dy {
+                    let neighbor_cell =
+                        CellCoord::new(center_cell.x + dx, center_cell.y + dy, center_cell.z + dz);
+                    let key = neighbor_cell.spatial_key();
+                    let bucket = (key as usize) & self.bucket_mask;
+
+                    let mut curr = self.bucket_heads[bucket];
+                    while curr != TERMINAL_INDEX {
+                        let curr_idx = curr as usize;
+                        if self.entity_keys[curr_idx] == key && self.active_mask[curr_idx] {
+                            let m = self.morton_codes[curr_idx];
+                            // Coarse Morton code filter: skip entities clearly outside spatial Morton range
+                            if m >= lo_morton && m <= hi_morton {
+                                batch_candidates[batch_len] = curr;
+                                batch_positions[batch_len] = self.positions[curr_idx];
+                                batch_len += 1;
+
+                                if batch_len == 4 {
+                                    let dists =
+                                        Vec3Fix::batch_distance_squared_4x(batch_positions, center);
+                                    for i in 0..4 {
+                                        if dists[i] <= radius_sq {
+                                            if matched_count < output_buffer.len() {
+                                                output_buffer[matched_count] = batch_candidates[i];
+                                            }
+                                            matched_count += 1;
+                                        }
+                                    }
+                                    batch_len = 0;
+                                }
+                            }
+                        }
+                        curr = self.next_in_cell[curr_idx];
+                    }
+                }
+            }
+        }
+
         if batch_len > 0 {
             batch_positions[batch_len..4].fill(center);
             let dists = Vec3Fix::batch_distance_squared_4x(batch_positions, center);

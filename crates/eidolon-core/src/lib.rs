@@ -13,6 +13,7 @@ pub mod identity;
 pub mod item;
 pub mod kinematics;
 pub mod lock;
+pub mod morton;
 pub mod quant;
 pub mod trace;
 
@@ -30,6 +31,11 @@ pub use kinematics::{
     FLAG_FALLING, FLAG_IDLE, FLAG_IMMOBILIZED, FLAG_JUMPING, FLAG_SPRINTING, FLAG_WALKING,
 };
 pub use lock::{GenerationLockRegistry, LockEntry, LockError, LockToken, MAX_TRACKED_LOCKS};
+pub use morton::{
+    compact_bits_21, morton_decode_i32, morton_decode_u32, morton_decode_vec3, morton_encode_i32,
+    morton_encode_u32, morton_encode_vec3, spread_bits_21, MORTON_COORDINATE_BIAS,
+    MORTON_MAX_COORDINATE,
+};
 pub use quant::{
     QuantizedCellCoord, QuantizedYaw, CELL_HORIZONTAL_SIZE, CELL_VERTICAL_SIZE,
     HORIZONTAL_RESOLUTION_METERS, MAX_QUANTIZED_HORIZONTAL, MAX_QUANTIZED_VERTICAL,

@@ -92,6 +92,7 @@ pub struct EidolonClient {
     recv_seq: u16,
     ack_mask: u32,
     packet_buffer: [u8; MAX_PACKET_SIZE],
+    time_dilation: f32,
 }
 
 impl EidolonClient {
@@ -113,6 +114,16 @@ impl EidolonClient {
         }
     }
 
+    /// Returns the current server-mandated time dilation factor (1.0 = normal, <1.0 = dilated).
+    pub fn time_dilation(&self) -> f32 {
+        self.time_dilation
+    }
+
+    /// Sets the local time dilation factor.
+    pub fn set_time_dilation(&mut self, factor: f32) {
+        self.time_dilation = factor.clamp(0.01, 1.0);
+    }
+
     /// Creates and initializes a new `EidolonClient` bound to a non-blocking UDP socket.
     pub fn new(config: ClientConfig) -> Result<Self, ClientError> {
         let bind_addr = config
@@ -130,6 +141,7 @@ impl EidolonClient {
             recv_seq: 0,
             ack_mask: 0,
             packet_buffer: [0u8; MAX_PACKET_SIZE],
+            time_dilation: 1.0,
         })
     }
 
@@ -311,6 +323,12 @@ impl EidolonClient {
                 Err(e) => {
                     return Err(ClientError::Io(e));
                 }
+            }
+        }
+
+        for event in &events {
+            if let ClientEvent::TimeDilationChanged { time_dilation } = event {
+                self.time_dilation = *time_dilation;
             }
         }
 
@@ -725,6 +743,15 @@ impl EidolonClient {
                     leader_account_id,
                     member_count,
                 });
+            }
+            // Time dilation changed: type (1B) + factor_raw (8B) = 9B
+            9 if payload.len() >= 9 => {
+                let factor_raw = i64::from_be_bytes([
+                    payload[1], payload[2], payload[3], payload[4], payload[5], payload[6],
+                    payload[7], payload[8],
+                ]);
+                let time_dilation = (factor_raw as f32) / 4294967296.0;
+                events.push(ClientEvent::TimeDilationChanged { time_dilation });
             }
             _ => {}
         }
