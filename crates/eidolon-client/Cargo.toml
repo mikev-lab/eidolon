@@ -1,0 +1,15 @@
+[package]
+name = "eidolon-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Native game client SDK, UDP connection handshake, kinematic dead reckoning, and smooth interpolation."
+
+[lints]
+workspace = true
+
+[dependencies]
+eidolon-core = { workspace = true }
+eidolon-net = { workspace = true }

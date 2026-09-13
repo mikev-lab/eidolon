@@ -3,8 +3,25 @@
 version = 4
 
 [[package]]
+name = "eidolon-client"
+version = "0.1.0"
+dependencies = [
+ "eidolon-core",
+ "eidolon-net",
+]
+
+[[package]]
 name = "eidolon-core"
 version = "0.1.0"
+
+[[package]]
+name = "eidolon-ffi"
+version = "0.1.0"
+dependencies = [
+ "eidolon-client",
+ "eidolon-core",
+ "eidolon-net",
+]
 
 [[package]]
 name = "eidolon-net"
@@ -17,6 +34,7 @@ dependencies = [
 name = "eidolon-server"
 version = "0.1.0"
 dependencies = [
+ "eidolon-client",
  "eidolon-core",
  "eidolon-net",
  "eidolon-spatial",

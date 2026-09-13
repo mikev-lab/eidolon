@@ -15,7 +15,8 @@
   <a href="#overview">Overview</a> •
   <a href="#the-engineering-problem-the-mmo-egress-trap">The Egress Trap</a> •
   <a href="#key-architectural-pillars">Architectural Pillars</a> •
-  <a href="#world-topology">World Topology</a> •
+  <a href="#playable-mini-mmo-vertical-slice">Playable Slice</a> •
+  <a href="#game-engine-integration-godot-unreal-unity-custom-engines">Engines</a> •
   <a href="#performance-benchmarks--wire-metrics">Benchmarks</a> •
   <a href="#workspace-crates">Workspace Crates</a> •
   <a href="#quickstart--developer-guide">Quickstart</a> •
@@ -133,6 +134,76 @@ An unoptimized MMO streaming raw 32-bit coordinates at 20 KB/s per player to 100
 
 ---
 
+## Playable Mini-MMO Vertical Slice
+
+To experience the entire end-to-end stack running authoritatively with real UDP sockets, 20 Hz simulation tick, 44-bit quantization AoI broadcast, 60 FPS client-side dead reckoning extrapolation, combat, loot generation, and durable WAL `fdatasync`, run the self-contained vertical slice:
+
+```bash
+cargo run -p eidolon-server --example tiny_mmo
+```
+
+### What this executable demonstrates:
+1. **Zero-GC Server Initialization:** Boots an authoritative `EidolonApp` listening on non-blocking UDP with an integrated spatial hash grid and append-only WAL.
+2. **NPC Monsters in 3D Space:** Spawns wandering entities (Goblin Scout, Orc Warrior, Forest Wolf) partitioned in spatial buckets.
+3. **Cryptographic 3-Way Handshake:** Connects a native client (`Sir Galahad`) through challenge/proof tokens.
+4. **Dynamic AoI Discovery:** Streams nearby monster transforms bitpacked into 22-byte diff updates.
+5. **WASD Intent & 60 FPS Dead Reckoning:** Streams movement vectors and executes deterministic kinematic extrapolation between 50ms server ticks with zero rubber-banding.
+6. **Authoritative Combat & Loot:** Sir Galahad slashes the Goblin Scout, triggering health subtraction, monster defeat, and loot drop emission.
+7. **Durable WAL Barrier:** Persists the acquired gold transaction to disk via physical `fdatasync`.
+8. **Crash & Reconnect Resumption:** Client disconnects and immediately reconnects, resuming authenticated session state.
+9. **ASCII World Status Map:** Visualizes final player, monster, and defeated entity coordinates in terminal.
+
+---
+
+## Game Engine Integration (Godot, Unreal, Unity & Custom Engines)
+
+`eidolon` is built to serve as the unified backend for commercial and in-house game engines.
+
+Through **`crates/eidolon-ffi`** and **`crates/eidolon-client`**, the engine exports an unmanaged ANSI C99 ABI with panic-safe FFI boundaries, accompanied by idiomatic binding wrappers:
+
+```text
+                      +---------------------------------------+
+                      |   Authoritative Eidolon MMO Server    |
+                      |   (20 Hz Tick, Spatial AoI, WAL)      |
+                      +---------------------------------------+
+                                          ^
+                                          | UDP (<1.2 KB/s)
+                                          v
+                      +---------------------------------------+
+                      |        eidolon-client (Rust)          |
+                      |  - Intent Streaming                   |
+                      |  - 44-bit AoI State Reconstruction    |
+                      |  - Continuous Dead Reckoning Extrap.  |
+                      +---------------------------------------+
+                                          ^
+                                          | Native Call
+                                          v
+                      +---------------------------------------+
+                      |         eidolon-ffi (C ABI)           |
+                      |  - include/eidolon.h                  |
+                      |  - libeidolon.so / .dylib / .dll      |
+                      +---------------------------------------+
+                           |                              |
+            +--------------+---------------+              |
+            |                              |              |
+            v                              v              v
+  +--------------------+        +--------------------+  +--------------------+
+  |    Unity Engine    |        |  Godot Engine 4    |  |  Unreal Engine 5   |
+  |  (C# P/Invoke)     |        |  (C# / GDExtension)|  |  (C++ Subsystem)   |
+  +--------------------+        +--------------------+  +--------------------+
+```
+
+### Supported Integration Paths:
+* **Godot 4 (.NET / C#):** Drop `bindings/csharp/EidolonClient.cs` and the compiled native library into your project. Call `_client.PollEvents()` and `_client.ExtrapolateEntity()` inside `_PhysicsProcess`.
+* **Unreal Engine 5 (C++ Plugin):** Include `bindings/cpp/EidolonClient.hpp` in a `UGameInstanceSubsystem` or `FTickableGameObject`, updating actor transforms in `Tick(float DeltaTime)`.
+* **Unity (2021+, 2022+, Unity 6):** Drop `bindings/csharp/EidolonClient.cs` and native libraries into `Assets/Plugins/Eidolon/`. Call from any `MonoBehaviour` script.
+* **Custom C / C++ Engines:** Link directly against `libeidolon` using standard ANSI C99 header `include/eidolon.h` or C++17 RAII wrapper `bindings/cpp/EidolonClient.hpp`.
+
+Complete step-by-step setup guides, build instructions, and code samples are provided in:
+**[Game Engine Integration Guide (`docs/GAME_ENGINE_INTEGRATION.md`)](./docs/GAME_ENGINE_INTEGRATION.md)**
+
+---
+
 ## Performance Benchmarks & Wire Metrics
 
 All performance claims and wire budgets are measured empirically using automated integration test suites and high-precision microbenchmark harnesses.
@@ -213,19 +284,29 @@ eidolon/
 │   ├── eidolon-net/         # UDP transport, register bitpacking, packet channels & crypto
 │   ├── eidolon-spatial/     # Spatial hash grid, intrusive slot maps & dynamic 3-tier AoI
 │   ├── eidolon-world/       # Seamless zoned world, durable journal, dungeons & hibernation
-│   └── eidolon-server/      # Headless server binary, tick loop coordinator & Agones hooks
+│   ├── eidolon-server/      # Headless server binary, tick loop coordinator & Agones hooks
+│   ├── eidolon-client/      # Pure Rust client, 60+ FPS dead reckoning & state reconstruction
+│   └── eidolon-ffi/         # Unmanaged C ABI dynamic/static library with panic safety
+├── bindings/
+│   ├── csharp/              # Idiomatic C# wrapper with P/Invoke (Unity, Godot .NET)
+│   └── cpp/                 # C++17 RAII wrapper (Unreal Engine 5, Custom Engines)
+├── include/
+│   └── eidolon.h            # ANSI C99 / C++ header interface
 ├── docs/                    # Public technical and architectural specifications
 ├── Cargo.toml               # Workspace manifest
 └── LICENSE                  # Business Source License 1.1 ($1M Indie Exemption)
 ```
 
-| Crate | Core Architecture & Responsibilities |
+| Crate / Directory | Core Architecture & Responsibilities |
 | :--- | :--- |
 | **`eidolon-core`** | Float-free deterministic arithmetic, 32.32 fixed-point vectors (`Fixed64`, `Vec3Fix`), 44-bit coordinate quantization, 1-byte yaw, intent dead reckoning extrapolation FSM, and 3-tier `AccountId -> SessionTicket -> CharacterId` capability tokens. |
 | **`eidolon-net`** | Register-width bitstream reader/writer, 12-byte zero-copy packet framing, sequenced unreliable channels, ordered reliable channels with sliding-window selective ACKs, first-principles SHA-256/HMAC-SHA256, pluggable `CryptoProvider`, and token-bucket rate policers. |
 | **`eidolon-spatial`** | Cache-conscious 2D/3D spatial hash grid with 64-byte aligned bucket headers, intrusive slot-map indexing, 4-wide SIMD batched radius queries, dynamic 3-tier AoI frequency state machines, and pre-allocated double-buffered interest sets. |
 | **`eidolon-world`** | World manager coordinating seamless zone boundaries with 16m overlapping seams, atomic in-memory entity handoffs, append-only `DurableFileJournal` with POSIX `fdatasync`, ephemeral dungeon instances (<50ms allocation), and cold account hibernation (<256B). |
 | **`eidolon-server`** | Headless server binary. Integrates native non-blocking UDP I/O worker threads with a synchronous 20 Hz tick coordinator, target-instant drift-free pacing, zero-allocation bounded SPSC queues, Prometheus telemetry, and Agones Kubernetes lifecycle hooks. |
+| **`eidolon-client`** | Pure Rust client SDK managing non-blocking UDP sockets, cryptographic challenge/proof handshake, 44-bit quantized AoI entity reconstruction, and high-precision 60/120/144 FPS client-side dead reckoning extrapolation. |
+| **`eidolon-ffi`** | Unmanaged ANSI C99 dynamic (`.so`, `.dylib`, `.dll`) and static (`.a`, `.lib`) libraries exposing panic-safe C functions for game engines. |
+| **`bindings/`** | Production-ready language bindings: C# (`EidolonClient.cs`) for Unity and Godot 4 (.NET), and C++17 RAII wrapper (`EidolonClient.hpp`) for Unreal Engine 5 and custom engines. |
 
 ---
 
@@ -235,35 +316,42 @@ eidolon/
 - [Rust Toolchain](https://www.rust-lang.org/) (1.80.0 or higher recommended, 2021 edition).
 - Zero external C/C++ build dependencies, CMake, or system libraries required.
 
-### 1. Build the Workspace
+### 1. Run the Interactive Playable Mini-MMO
+Run the end-to-end playable vertical slice verifying the 20 Hz authoritative server, spatial grid, monsters, client connection, 60 FPS extrapolation, combat, loot, and durable `fdatasync` WAL:
+
+```bash
+cargo run -p eidolon-server --example tiny_mmo
+```
+
+### 2. Build the Workspace
 Compile the entire workspace in release mode with maximum optimization:
 
 ```bash
 cargo build --release
 ```
 
-### 2. Run the Full Test Suite
-Execute unit, integration, and chaos test suites across all 5 workspace crates:
+### 3. Run the Full Test Suite
+Execute unit, integration, FFI, and chaos test suites across all 7 workspace crates:
 
 ```bash
 cargo test --all-targets --all-features
 ```
 
-### 3. Run the Microbenchmark Battery
+### 4. Run the Microbenchmark Battery
 Benchmark fixed-point math, coordinate quantization, bitpacking, and SIMD spatial queries on your local hardware:
 
 ```bash
 cargo test -p eidolon-server --test microbenchmarks -- --nocapture
 ```
 
-### 4. Run the 2,000 CCU Load Simulation Harness
+### 5. Run the 2,000 CCU Load Simulation Harness
 Execute the authoritative multi-client load test verifying 20 Hz cadence and sub-1.2 KB/s wire egress:
 
 ```bash
 cargo test -p eidolon-server --test simulation_harness -- --nocapture
 ```
 
-### 5. Verify Architectural Invariants & Compliance
+### 6. Verify Architectural Invariants & Compliance
 Run the automated compliance test gate verifying zero third-party dependencies, memory safety lints, and stealth boundaries:
 
 ```bash
@@ -276,6 +364,7 @@ cargo test -p eidolon-server --test compliance
 
 In-depth engineering specifications, mathematical proofs, and operational runbooks are published in `docs/`:
 
+* **[Game Engine Integration (`docs/GAME_ENGINE_INTEGRATION.md`)](./docs/GAME_ENGINE_INTEGRATION.md):** Complete integration runbooks for Godot 4, Unreal Engine 5, Unity (2021-6), and custom C/C++ engines.
 * **[System Architecture (`docs/ARCHITECTURE.md`)](./docs/ARCHITECTURE.md):** System topology, tick loop scheduling, time budget enforcement, and Agones lifecycle.
 * **[Wire Protocol & Byte Math (`docs/WIRE_PROTOCOL.md`)](./docs/WIRE_PROTOCOL.md):** 32.32 fixed-point equations, 44-bit coordinate quantization, 1-byte yaw, and 12-byte packet framing.
 * **[Spatial Partitioning & AoI (`docs/SPATIAL_PARTITIONING.md`)](./docs/SPATIAL_PARTITIONING.md):** Spatial hash grid, Struct-of-Arrays memory layout, intrusive slot-map, and 3-tier AoI state machines.

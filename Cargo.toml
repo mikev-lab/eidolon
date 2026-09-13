@@ -6,6 +6,8 @@ members = [
     "crates/eidolon-spatial",
     "crates/eidolon-world",
     "crates/eidolon-server",
+    "crates/eidolon-client",
+    "crates/eidolon-ffi",
 ]
 
 [workspace.package]
@@ -30,3 +32,5 @@ eidolon-core = { path = "crates/eidolon-core", version = "0.1.0" }
 eidolon-net = { path = "crates/eidolon-net", version = "0.1.0" }
 eidolon-spatial = { path = "crates/eidolon-spatial", version = "0.1.0" }
 eidolon-world = { path = "crates/eidolon-world", version = "0.1.0" }
+eidolon-client = { path = "crates/eidolon-client", version = "0.1.0" }
+eidolon-ffi = { path = "crates/eidolon-ffi", version = "0.1.0" }

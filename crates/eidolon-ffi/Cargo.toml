@@ -1,11 +1,15 @@
 [package]
-name = "eidolon-server"
+name = "eidolon-ffi"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Headless production server binary, fixed-step tick coordinator, and Agones lifecycle integration."
+description = "Universal C ABI dynamic and static library for Godot, Unreal Engine, Unity, and custom game engines."
+
+[lib]
+name = "eidolon"
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [lints]
 workspace = true
@@ -13,9 +17,4 @@ workspace = true
 [dependencies]
 eidolon-core = { workspace = true }
 eidolon-net = { workspace = true }
-eidolon-spatial = { workspace = true }
-eidolon-world = { workspace = true }
-
-[dev-dependencies]
 eidolon-client = { workspace = true }
-
