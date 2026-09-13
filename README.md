@@ -208,6 +208,15 @@ For the full legal parameters, please review the [LICENSE](./LICENSE) file.
 - [x] Second-Order Intent Dead Reckoning & Extrapolation FSM
 - [x] Tier 1 Deterministic Parity & 10,000-Tick Verification Suite
 
+### Phase 3 Progress (Spatial Partitioning & Area of Interest)
+- [x] Pre-Allocated Flat Spatial Hash Grid with Intrusive Slot Indexing (`SpatialHashGrid`)
+- [x] Constant-Time $O(1)$ Entity Insertion, Removal, and Boundary Seam Migration
+- [x] Constant-Time Bounded $3 \times 3$ Cell Neighborhood Queries
+- [x] Dynamic 3-Tier AoI Frequency State Machine with Spatial Hysteresis
+- [x] Pre-Allocated Double-Buffered Observer Interest Sets (`ObserverInterestSet`)
+- [x] Adaptive Tick Overrun Load Shedding (Level 1 and Level 2)
+- [x] Tier 3 Spatial Saturation & 1,000-Entity Cluster Test Suite
+
 ---
 
 <div align="center">
