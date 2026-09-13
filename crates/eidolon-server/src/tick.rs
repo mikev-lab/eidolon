@@ -3,10 +3,11 @@
 //! Enforces exact 50ms simulation steps using monotonic clocks with accumulated drift correction,
 //! adaptive spatial load shedding under CPU spikes, and watchdog circuit breakers.
 
-use std::thread;
 use std::time::{Duration, Instant};
 
 use eidolon_spatial::aoi::LoadSheddingLevel;
+
+use crate::clock::{ClockGovernor, ClockGovernorConfig};
 
 /// Standard simulation tick interval (50,000 microseconds = 50ms at 20 Hz).
 pub const DEFAULT_TICK_MICROS: u64 = 50_000;
@@ -40,12 +41,11 @@ pub struct TickMetrics {
 pub struct TickCoordinator {
     tick_interval: Duration,
     current_tick: u64,
-    accumulated_lag: Duration,
-    start_instant: Instant,
     last_tick_instant: Instant,
     shedding_level: LoadSheddingLevel,
     consecutive_normal_ticks: u32,
     metrics: TickMetrics,
+    clock_governor: ClockGovernor,
 }
 
 impl TickCoordinator {
@@ -53,15 +53,20 @@ impl TickCoordinator {
     pub fn new(tick_rate_hz: u32) -> Self {
         let micros = 1_000_000 / (tick_rate_hz.max(1) as u64);
         let now = Instant::now();
+        let tick_interval = Duration::from_micros(micros);
+        let clock_governor = ClockGovernor::with_config(ClockGovernorConfig {
+            tick_interval,
+            ..ClockGovernorConfig::default()
+        });
+
         Self {
-            tick_interval: Duration::from_micros(micros),
+            tick_interval,
             current_tick: 0,
-            accumulated_lag: Duration::ZERO,
-            start_instant: now,
             last_tick_instant: now,
             shedding_level: LoadSheddingLevel::None,
             consecutive_normal_ticks: 0,
             metrics: TickMetrics::default(),
+            clock_governor,
         }
     }
 
@@ -136,20 +141,24 @@ impl TickCoordinator {
         self.shedding_level
     }
 
+    /// Returns an immutable reference to the clock governor.
+    #[inline]
+    pub const fn clock_governor(&self) -> &ClockGovernor {
+        &self.clock_governor
+    }
+
+    /// Returns a mutable reference to the clock governor.
+    #[inline]
+    pub fn clock_governor_mut(&mut self) -> &mut ClockGovernor {
+        &mut self.clock_governor
+    }
+
     /// Sleeps or yields remaining tick headroom to maintain exact 20 Hz pacing.
     ///
-    /// Dynamically aligns to monotonic tick target boundaries to eliminate OS scheduler drift.
-    pub fn sleep_headroom(&mut self, _execution_duration: Duration) {
-        let now = Instant::now();
-        let target = self.start_instant
-            + self
-                .tick_interval
-                .saturating_mul(self.current_tick.max(1) as u32);
-        if target > now {
-            thread::sleep(target - now);
-        } else {
-            self.accumulated_lag += now - target;
-        }
+    /// Dynamically aligns to monotonic tick target boundaries to eliminate OS scheduler drift,
+    /// absorbing virtualization suspend/resume pauses and clamping catch-up cascades.
+    pub fn sleep_headroom(&mut self, execution_duration: Duration) {
+        self.clock_governor.sleep_pacing(execution_duration);
         self.last_tick_instant = Instant::now();
     }
 }

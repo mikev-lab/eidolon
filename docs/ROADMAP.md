@@ -135,26 +135,26 @@ Following strict distributed systems engineering discipline, deliverables are ca
 
 ---
 
-### Phase 10: End-to-End Backpressure, Capacity Admission & Clock Discipline (P1)
+### Phase 10: End-to-End Backpressure, Capacity Admission & Clock Discipline (P1 - Completed & Verified)
 
 *Objective: Unify network queues, simulation ticks, and egress scheduling into a bounded backpressure pipeline, while establishing strict clock discipline against NTP drift and VM migration pauses.*
 
-- **Milestone 10.1: Unified End-to-End Backpressure Pipeline**
-  - Continuous backpressure dataflow:
+- [x] **Milestone 10.1: Unified End-to-End Backpressure Pipeline**
+  - [x] Continuous backpressure dataflow:
     $$\text{UDP Socket} \longrightarrow \text{Ingress Queue} \longrightarrow \text{Simulation} \longrightarrow \text{AoI Manager} \longrightarrow \text{Replication Scheduler} \longrightarrow \text{Egress Queue} \longrightarrow \text{UDP Socket}$$
-  - Zero unbounded queues anywhere in the engine.
-  - Defined stage behavior under saturation:
+  - [x] Zero unbounded queues anywhere in the engine (`BoundedIngressQueue`, `BoundedEgressQueue`).
+  - [x] Defined stage behavior under saturation:
     * Ingress Queue: Drop stale unsequenced movement packets; preserve ordered reliable packets until timeout.
     * Replication Scheduler: Shed low-frequency AoI tiers (Horizon -> Mid -> Immediate).
     * Egress Queue: Drop oldest unacked unreliable transforms; apply socket backpressure.
-- **Milestone 10.2: Hierarchical Capacity Admission Control & Graceful Saturation Degradation**
-  - Formal priority shedding hierarchy under extreme entity density:
+- [x] **Milestone 10.2: Hierarchical Capacity Admission Control & Graceful Saturation Degradation**
+  - [x] Formal priority shedding hierarchy under extreme entity density:
     $$\text{Critical Combat Events} > \text{Nearby Movement (<10m)} > \text{Mid-Range Movement (<50m)} > \text{Far State} > \text{Cosmetics}$$
-  - Controlled degradation policy: bandwidth pressure automatically reduces update frequency, scales quantization precision, and pages distant entities while maintaining combat responsiveness.
-- **Milestone 10.3: Simulation Clock Discipline & Time Warp Protection**
-  - Strict separation of monotonic simulation time (`Instant`) from wall-clock UTC time (`SystemTime`).
-  - NTP step immunity: simulated ticks proceed strictly via hardware monotonic cycles; wall-clock jumps (+5s or -2s) cannot cause tick skips or simulation time acceleration.
-  - Host virtualization pause recovery: detect hypervisor suspend/resume events and perform graceful multi-tick catch-up clamping rather than spiral-of-death tick cascades.
+  - [x] Controlled degradation policy: bandwidth pressure automatically reduces update frequency, scales quantization precision, and pages distant entities while maintaining combat responsiveness (`AdmissionController`, `PriorityClass`).
+- [x] **Milestone 10.3: Simulation Clock Discipline & Time Warp Protection**
+  - [x] Strict separation of monotonic simulation time (`Instant`) from wall-clock UTC time (`SystemTime`) (`ClockGovernor`).
+  - [x] NTP step immunity: simulated ticks proceed strictly via hardware monotonic cycles; wall-clock jumps (+5s or -2s) cannot cause tick skips or simulation time acceleration.
+  - [x] Host virtualization pause recovery: detect hypervisor suspend/resume events and perform graceful multi-tick catch-up clamping rather than spiral-of-death tick cascades.
 
 ---
 
@@ -268,7 +268,7 @@ To achieve full production sign-off, `eidolon` must satisfy all gates in this sc
 | **Authority Fencing** | Completed | Stale session & reconnect rejection | 0 stale state overwrites under network split |
 | **Persistence (WAL)** | Completed | Crash consistency & dupe prevention | 0 lost transactions / 0 duplicated items |
 | **State Reconstruction**| Completed | Disposable node recovery | 100% state restored after SIGKILL |
-| **End-to-End Flow** | P1 | Overload backpressure | 0 unbounded queues; graceful shedding |
+| **End-to-End Flow** | Completed | Overload backpressure | 0 unbounded queues; graceful shedding |
 | **Distributed Chaos** | P1 | Multi-server 100k CCU harness | 100% entity accounting across zone seams |
 | **Network Impairment** | P1 | Compound 5% loss + 150ms jitter | 0 desyncs; deterministic dead reckoning |
 | **Soak Stability** | P1 | 7-day continuous execution | 0 RSS memory growth; 0 tick latency drift |

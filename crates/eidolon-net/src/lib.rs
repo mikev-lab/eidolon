@@ -6,7 +6,9 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod admission;
 pub mod auth;
+pub mod backpressure;
 pub mod bitstream;
 pub mod channel;
 pub mod crypto;
@@ -18,11 +20,16 @@ pub mod quota;
 pub mod version;
 
 // Re-export primary types for ergonomic crate consumption.
+pub use admission::{AdmissionConfig, AdmissionController, AdmissionMetrics, PriorityClass};
 pub use auth::{
     compute_auth_cookie, compute_client_proof, verify_client_proof, ConnectChallengeRequest,
     ConnectChallengeResponse, ConnectFinalizeRequest, ConnectFinalizeResponse, ReplayWindow,
     SessionSecurityContext, CHALLENGE_REQ_LEN, CHALLENGE_RESP_LEN, FINALIZE_REQ_LEN,
     FINALIZE_RESP_LEN, NONCE_LEN,
+};
+pub use backpressure::{
+    BackpressureCoordinator, BackpressureLevel, BackpressureMetrics, BoundedEgressQueue,
+    BoundedIngressQueue, PrioritizedPacket,
 };
 pub use bitstream::{BitReader, BitWriter};
 pub use channel::{
