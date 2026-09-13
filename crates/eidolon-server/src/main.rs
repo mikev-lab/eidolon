@@ -10,11 +10,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use eidolon_net::protocol::{PROTOCOL_MAGIC, PROTOCOL_VERSION};
+use eidolon_net::packet::{PacketHeader, PacketView};
+use eidolon_net::protocol::{
+    ChannelType, PacketType, HEADER_SIZE, PROTOCOL_MAGIC, PROTOCOL_VERSION,
+};
 use eidolon_server::agones::AgonesClient;
 use eidolon_server::config::ServerConfig;
 use eidolon_server::io::NetworkIoWorker;
-use eidolon_server::queue::SpscPacketQueue;
+use eidolon_server::queue::{NetworkPacket, SpscPacketQueue};
 use eidolon_server::tick::TickCoordinator;
 
 /// Runs the authoritative 20 Hz simulation tick loop until `running` becomes false or `max_ticks` is reached.
@@ -42,6 +45,34 @@ pub fn run_authoritative_loop(
         let _received = worker.drain_ingress(ingress_queue, 64);
 
         // 2. Authoritative simulation tick (fixed-step)
+        // Ingest and validate incoming client packets zero-copy
+        while let Some(packet) = ingress_queue.try_pop() {
+            if let Ok(view) = PacketView::from_bytes(&packet.payload[..packet.len]) {
+                match view.header.packet_type {
+                    PacketType::StateUpdate => {
+                        // Authoritative client movement/intent update
+                    }
+                    PacketType::Heartbeat => {
+                        // Echo heartbeat keepalive back to client peer
+                        let mut resp = [0u8; HEADER_SIZE];
+                        let header = PacketHeader::new(
+                            ChannelType::UnreliableSequenced,
+                            PacketType::Heartbeat,
+                            view.header.sequence,
+                            0,
+                            0,
+                        );
+                        if header.write_to(&mut resp).is_ok() {
+                            if let Some(pkt) = NetworkPacket::new(packet.peer_addr, &resp) {
+                                let _ = egress_queue.try_push(pkt);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // Agones periodic health check ping every 40 ticks (~2 seconds at 20 Hz)
         if ticks_executed.is_multiple_of(40) {
             let _ = agones.health();

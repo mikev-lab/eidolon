@@ -61,6 +61,23 @@ impl Fixed64 {
         (self.0 >> Self::FRACTIONAL_BITS) as i32
     }
 
+    /// Returns the largest integer less than or equal to this Fixed64.
+    #[inline]
+    pub const fn floor(self) -> Self {
+        Self((self.0 >> Self::FRACTIONAL_BITS) << Self::FRACTIONAL_BITS)
+    }
+
+    /// Returns the smallest integer greater than or equal to this Fixed64.
+    #[inline]
+    pub const fn ceil(self) -> Self {
+        let mask = (1i64 << Self::FRACTIONAL_BITS) - 1;
+        if (self.0 & mask) == 0 {
+            self
+        } else {
+            Self(((self.0 >> Self::FRACTIONAL_BITS) + 1) << Self::FRACTIONAL_BITS)
+        }
+    }
+
     /// Converts an f64 to Fixed64, clamping to representable bounds.
     #[inline]
     pub fn from_f64(val: f64) -> Self {

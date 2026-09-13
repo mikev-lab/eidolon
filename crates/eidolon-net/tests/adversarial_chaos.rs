@@ -121,7 +121,7 @@ fn test_reliable_channel_1000_messages_under_35_percent_loss() {
 
         // Collect packets to send (new + retransmissions)
         let mut packets_to_transmit = Vec::new();
-        sender_channel.check_retransmissions(|seq, data| {
+        let _ = sender_channel.check_retransmissions(|seq, data| {
             packets_to_transmit.push((seq, data.to_vec()));
         });
 

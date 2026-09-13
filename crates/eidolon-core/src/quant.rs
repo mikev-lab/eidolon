@@ -112,6 +112,39 @@ impl QuantizedCellCoord {
         }
     }
 
+    /// Quantizes a continuous global world position into its enclosing grid cell
+    /// indices and normalized local-cell 16-bit quantized offset.
+    ///
+    /// Works across arbitrary positive and negative continuous coordinates using
+    /// bit-exact Euclidean cell decomposition:
+    /// - Horizontal cell size: 64.0m (2^6 m, 38-bit raw in 32.32 representation)
+    /// - Vertical cell size: 32.0m (2^5 m, 37-bit raw in 32.32 representation)
+    #[inline]
+    pub fn quantize_from_global(pos: Vec3Fix) -> (i32, i32, i32, Self) {
+        let cell_x = (pos.x.raw() >> 38) as i32;
+        let cell_y = (pos.y.raw() >> 37) as i32;
+        let cell_z = (pos.z.raw() >> 38) as i32;
+
+        let local_x = pos.x - Fixed64::from_i32(cell_x * 64);
+        let local_y = pos.y - Fixed64::from_i32(cell_y * 32);
+        let local_z = pos.z - Fixed64::from_i32(cell_z * 64);
+
+        let quant = Self::quantize(local_x, local_y, local_z);
+        (cell_x, cell_y, cell_z, quant)
+    }
+
+    /// Reconstructs a continuous global world position from discrete cell indices
+    /// and a quantized local-cell coordinate.
+    #[inline]
+    pub fn dequantize_to_global(cell_x: i32, cell_y: i32, cell_z: i32, quant: Self) -> Vec3Fix {
+        let cell_origin = Vec3Fix {
+            x: Fixed64::from_i32(cell_x * 64),
+            y: Fixed64::from_i32(cell_y * 32),
+            z: Fixed64::from_i32(cell_z * 64),
+        };
+        cell_origin + quant.dequantize()
+    }
+
     /// Dequantizes the coordinate to continuous f64 coordinates.
     pub fn to_f64(self) -> (f64, f64, f64) {
         let x = (self.x as f64) * HORIZONTAL_RESOLUTION_METERS;

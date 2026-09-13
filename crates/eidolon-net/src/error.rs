@@ -89,6 +89,8 @@ pub enum NetError {
     QueueFull,
     /// Sequence comparison or ACK bitfield is corrupted.
     CorruptedData,
+    /// Connection or channel timed out after exceeding maximum retransmissions.
+    ConnectionTimedOut,
 }
 
 impl fmt::Display for NetError {
@@ -117,6 +119,7 @@ impl fmt::Display for NetError {
             ),
             Self::QueueFull => write!(f, "Packet queue is saturated (backpressure limit reached)"),
             Self::CorruptedData => write!(f, "Corrupted packet or channel data"),
+            Self::ConnectionTimedOut => write!(f, "Connection timed out after maximum retransmission attempts"),
         }
     }
 }

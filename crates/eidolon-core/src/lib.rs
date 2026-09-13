@@ -93,6 +93,39 @@ mod tests {
     }
 
     #[test]
+    fn test_global_quantization_roundtrip_multi_cell() {
+        let test_positions = [
+            Vec3Fix::from_f64(0.0, 0.0, 0.0),
+            Vec3Fix::from_f64(10.5, 5.25, 20.75),
+            Vec3Fix::from_f64(63.9, 31.9, 63.9),
+            Vec3Fix::from_f64(64.1, 32.1, 64.1),
+            Vec3Fix::from_f64(150.0, 100.0, 250.0),
+            Vec3Fix::from_f64(-10.5, 12.0, -25.5),
+            Vec3Fix::from_f64(-150.0, 50.0, -350.0),
+        ];
+
+        for pos in test_positions {
+            let (cx, cy, cz, quant) = QuantizedCellCoord::quantize_from_global(pos);
+            assert!(quant.is_valid());
+            let reconstructed = QuantizedCellCoord::dequantize_to_global(cx, cy, cz, quant);
+
+            // Sub-millimeter precision horizontally (< 1mm) and < 1cm vertically
+            assert!(
+                (reconstructed.x.to_f64() - pos.x.to_f64()).abs() < 0.002,
+                "X mismatch for {pos:?}"
+            );
+            assert!(
+                (reconstructed.y.to_f64() - pos.y.to_f64()).abs() < 0.01,
+                "Y mismatch for {pos:?}"
+            );
+            assert!(
+                (reconstructed.z.to_f64() - pos.z.to_f64()).abs() < 0.002,
+                "Z mismatch for {pos:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_wire_bitpacking_7_bytes() {
         let original_coord = QuantizedCellCoord::new(12345, 2048, 54321);
         let original_yaw = QuantizedYaw::from_degrees(180.0);

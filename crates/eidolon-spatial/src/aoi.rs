@@ -144,6 +144,18 @@ impl ObserverInterestSet {
         self.curr_count == 0
     }
 
+    /// Returns the slice of currently tracked entity IDs in sorted order.
+    #[inline]
+    pub fn visible_entities(&self) -> &[u32] {
+        &self.curr_entity_ids[..self.curr_count]
+    }
+
+    /// Returns the slice of frequency tiers corresponding to currently tracked entity IDs.
+    #[inline]
+    pub fn visible_tiers(&self) -> &[FrequencyTier] {
+        &self.curr_tiers[..self.curr_count]
+    }
+
     /// Updates tracked visibility from a spatial query result, emitting visibility events
     /// into `event_output` without heap allocation.
     ///

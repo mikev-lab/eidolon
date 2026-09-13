@@ -229,4 +229,27 @@ mod tests {
         assert_eq!(res.total_matches, 5);
         assert!(res.is_truncated());
     }
+
+    #[test]
+    fn test_large_radius_query_multi_cell() {
+        let mut grid = SpatialHashGrid::with_capacity(50, 128);
+        let center = Vec3Fix::ZERO;
+
+        // Place entity at 120m along X axis (which is cell x = 1 or 2 depending on origin)
+        // 120m / 64m = cell x = 1 (range [64, 128)).
+        // Place another entity at 150m along X axis: 150m / 64m = cell x = 2 (range [128, 192)).
+        assert!(grid.insert(1, Vec3Fix::from_f64(120.0, 0.0, 0.0)).is_ok());
+        assert!(grid.insert(2, Vec3Fix::from_f64(150.0, 0.0, 0.0)).is_ok());
+
+        // Query with radius 130m (radius_sq = 16900): should find entity 1 (120m <= 130m) but not entity 2 (150m > 130m)
+        let mut buffer = [0u32; 16];
+        let res = grid.query_radius_squared(center, Fixed64::from_i32(130 * 130), &mut buffer);
+        assert_eq!(res.written, 1);
+        assert_eq!(buffer[0], 1);
+
+        // Query with radius 160m (radius_sq = 25600): should find both entity 1 and entity 2
+        let res_large =
+            grid.query_radius_squared(center, Fixed64::from_i32(160 * 160), &mut buffer);
+        assert_eq!(res_large.written, 2);
+    }
 }

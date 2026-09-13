@@ -11,6 +11,9 @@ pub const MAX_RELIABLE_PAYLOAD: usize = 256;
 /// Retransmission timeout in simulation ticks.
 pub const DEFAULT_RETRY_TICKS: u32 = 4;
 
+/// Default maximum retransmission attempts before declaring connection timeout (16 retries).
+pub const DEFAULT_MAX_RETRIES: u8 = 16;
+
 /// Sequencer tracking packet delivery and out-of-order detection for unreliable streams.
 #[derive(Debug, Default, Clone)]
 pub struct UnreliableSequencer {
@@ -100,6 +103,8 @@ pub struct PendingReliablePacket {
     pub len: usize,
     /// Countdown ticks until next retransmission attempt.
     pub retry_countdown: u32,
+    /// Number of retransmission attempts executed so far.
+    pub retry_count: u8,
 }
 
 /// Buffer entry for out-of-order received reliable packets.
@@ -120,6 +125,8 @@ pub struct ReliableChannel<const PENDING_CAP: usize, const ORDERED_CAP: usize> {
     expected_incoming_seq: u16,
     pending_packets: [Option<PendingReliablePacket>; PENDING_CAP],
     reorder_buffer: [Option<IncomingReliablePacket>; ORDERED_CAP],
+    max_retries: u8,
+    is_timed_out: bool,
 }
 
 impl<const PENDING_CAP: usize, const ORDERED_CAP: usize> ReliableChannel<PENDING_CAP, ORDERED_CAP> {
@@ -130,6 +137,8 @@ impl<const PENDING_CAP: usize, const ORDERED_CAP: usize> ReliableChannel<PENDING
             expected_incoming_seq: 0,
             pending_packets: std::array::from_fn(|_| None),
             reorder_buffer: std::array::from_fn(|_| None),
+            max_retries: DEFAULT_MAX_RETRIES,
+            is_timed_out: false,
         }
     }
 
@@ -165,6 +174,7 @@ impl<const PENDING_CAP: usize, const ORDERED_CAP: usize> ReliableChannel<PENDING
             payload,
             len: data.len(),
             retry_countdown: DEFAULT_RETRY_TICKS,
+            retry_count: 0,
         });
 
         Ok(seq)
@@ -304,13 +314,27 @@ impl<const PENDING_CAP: usize, const ORDERED_CAP: usize> ReliableChannel<PENDING
     }
 
     /// Ticks retransmission timers and returns any packets needing retransmission.
-    pub fn check_retransmissions<F>(&mut self, mut on_retry: F)
+    ///
+    /// If any packet exceeds `max_retries`, sets `is_timed_out` to true and returns `Err(NetError::ConnectionTimedOut)`.
+    /// Retries apply exponential backoff (e.g. 4 ticks, 8 ticks, 16 ticks, capped at 32 ticks).
+    pub fn check_retransmissions<F>(&mut self, mut on_retry: F) -> Result<(), NetError>
     where
         F: FnMut(u16, &[u8]),
     {
+        if self.is_timed_out {
+            return Err(NetError::ConnectionTimedOut);
+        }
+
         for pending in self.pending_packets.iter_mut().flatten() {
             if pending.retry_countdown == 0 {
+                pending.retry_count = pending.retry_count.saturating_add(1);
+                if pending.retry_count > self.max_retries {
+                    self.is_timed_out = true;
+                    return Err(NetError::ConnectionTimedOut);
+                }
+
                 pending.retry_countdown = DEFAULT_RETRY_TICKS;
+
                 if let Some(payload_slice) = pending.payload.get(..pending.len) {
                     on_retry(pending.sequence, payload_slice);
                 }
@@ -318,6 +342,18 @@ impl<const PENDING_CAP: usize, const ORDERED_CAP: usize> ReliableChannel<PENDING
                 pending.retry_countdown = pending.retry_countdown.saturating_sub(1);
             }
         }
+        Ok(())
+    }
+
+    /// Returns true if the channel has timed out due to dead peer / unacknowledged packets.
+    #[inline]
+    pub fn is_timed_out(&self) -> bool {
+        self.is_timed_out
+    }
+
+    /// Sets the maximum retransmission attempts before declaring timeout.
+    pub fn set_max_retries(&mut self, max_retries: u8) {
+        self.max_retries = max_retries;
     }
 
     /// Returns the number of currently pending unacknowledged packets.
@@ -451,5 +487,35 @@ mod tests {
 
         // Buffer is empty now
         assert!(channel.drain_next_ordered_packet().is_none());
+    }
+
+    #[test]
+    fn test_reliable_channel_dead_peer_timeout() {
+        let mut channel = ReliableChannel::<4, 4>::new();
+        channel.set_max_retries(3);
+
+        let _seq = channel.queue_reliable_message(b"heartbeat").unwrap();
+        assert!(!channel.is_timed_out());
+
+        let mut retry_count = 0;
+        let mut timed_out = false;
+
+        // Run ticks without ACK
+        for _ in 0..100 {
+            let res = channel.check_retransmissions(|_s, _d| {
+                retry_count += 1;
+            });
+            if let Err(NetError::ConnectionTimedOut) = res {
+                timed_out = true;
+                break;
+            }
+        }
+
+        assert!(timed_out, "Channel must time out after max_retries");
+        assert!(channel.is_timed_out());
+        assert_eq!(
+            retry_count, 3,
+            "Must attempt exactly 3 retries before timeout"
+        );
     }
 }

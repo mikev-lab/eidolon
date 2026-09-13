@@ -322,15 +322,20 @@ impl SpatialHashGrid {
     ) -> SpatialQueryResult {
         let center_cell = CellCoord::from_position(center);
         let mut matched_count = 0;
-        let max_dy = if radius_sq > Fixed64::from_i32(32 * 32) {
-            2
-        } else {
-            1
-        };
+        let r_fixed = radius_sq.sqrt();
+        let max_dx = (r_fixed.saturating_div(Fixed64::from_i32(CELL_HORIZONTAL_SIZE)))
+            .ceil()
+            .to_i32()
+            .max(1);
+        let max_dy = (r_fixed.saturating_div(Fixed64::from_i32(CELL_VERTICAL_SIZE)))
+            .ceil()
+            .to_i32()
+            .max(1);
+        let max_dz = max_dx;
 
         // Cell neighborhood iteration around observer
-        for dx in -1..=1 {
-            for dz in -1..=1 {
+        for dx in -max_dx..=max_dx {
+            for dz in -max_dz..=max_dz {
                 for dy in -max_dy..=max_dy {
                     let neighbor_cell =
                         CellCoord::new(center_cell.x + dx, center_cell.y + dy, center_cell.z + dz);
@@ -371,19 +376,24 @@ impl SpatialHashGrid {
     ) -> SpatialQueryResult {
         let center_cell = CellCoord::from_position(center);
         let mut matched_count = 0;
-        let max_dy = if radius_sq > Fixed64::from_i32(32 * 32) {
-            2
-        } else {
-            1
-        };
+        let r_fixed = radius_sq.sqrt();
+        let max_dx = (r_fixed.saturating_div(Fixed64::from_i32(CELL_HORIZONTAL_SIZE)))
+            .ceil()
+            .to_i32()
+            .max(1);
+        let max_dy = (r_fixed.saturating_div(Fixed64::from_i32(CELL_VERTICAL_SIZE)))
+            .ceil()
+            .to_i32()
+            .max(1);
+        let max_dz = max_dx;
 
         let mut batch_candidates = [0u32; 4];
         let mut batch_positions = [Vec3Fix::ZERO; 4];
         let mut batch_len = 0;
 
         // Cell neighborhood iteration around observer
-        for dx in -1..=1 {
-            for dz in -1..=1 {
+        for dx in -max_dx..=max_dx {
+            for dz in -max_dz..=max_dz {
                 for dy in -max_dy..=max_dy {
                     let neighbor_cell =
                         CellCoord::new(center_cell.x + dx, center_cell.y + dy, center_cell.z + dz);

@@ -4,11 +4,11 @@
 
 **High-concurrency, low-bandwidth (<1 KB/s design target) zoned & instanced MMO server engine in Rust.**
 
-[![Status: Production Engine Complete](https://img.shields.io/badge/Status-Complete_(Phases_1--7)-success.svg)](#development-status)
+[![Status: Architecture Complete](https://img.shields.io/badge/Status-Architecture_Complete_(Phases_1--7)-success.svg)](#development-status)
 [![License: BSL 1.1](https://img.shields.io/badge/License-BSL_1.1_(Fair_Source)-blue.svg)](./LICENSE)
 [![Indie Grant: <$1M Free](https://img.shields.io/badge/Indie_Grant-%3C$1M_Free-success.svg)](./LICENSE)
 [![Language: Rust](https://img.shields.io/badge/Language-Rust-orange.svg)](https://www.rust-lang.org/)
-[![Target Wire Budget](https://img.shields.io/badge/Wire_Budget-460_B%2Fs_Verified_(%3C1.2_KB%2Fs_Target)-blueviolet.svg)](#the-engineering-problem-the-mmo-egress-trap)
+[![Target Wire Budget](https://img.shields.io/badge/Wire_Budget-1.18_KB%2Fs_Verified_(%3C1.2_KB%2Fs_Target)-blueviolet.svg)](#the-engineering-problem-the-mmo-egress-trap)
 
 <p align="center">
   <a href="#overview">Overview</a> •
@@ -26,8 +26,8 @@
 ---
 
 > [!NOTE]
-> **Project Status: Production Engine Complete (All 7 Phases Implemented & Verified).**  
-> All 7 core phases of the `eidolon` MMO world server engine are complete, tested, and benchmarked from first principles in pure Rust with zero third-party runtime dependencies. Microbenchmarks, 2,000 CCU simulation proofs, and full architectural specifications are published below.
+> **Project Status: Core Engine Architecture Complete: Production Hardening & Full Replication In Progress.**  
+> All 7 core phases of the `eidolon` MMO world server engine are implemented, tested, and benchmarked from first principles in pure Rust with zero third-party runtime dependencies. Microbenchmarks, 2,000 CCU end-to-end simulation proofs, and full architectural specifications are published below.
 
 ---
 
@@ -139,9 +139,10 @@ From the automated 2,000 CCU load simulation harness (`crates/eidolon-server/tes
 
 | Metric | Budget Target | Measured Production Result | Status |
 | :--- | :--- | :--- | :--- |
-| **Average Wire Egress per Bot** | < 1,228.8 B/s (1.2 KB/s) | **460.00 B/s (0.45 KB/s)** | **Exceeds Target (62.5% Under Budget)** |
-| **Authoritative Tick Cadence** | 20.0 Hz (50.0 ms) | **20.0 Hz (50.0 ms +/- 3.2 ms)** | **Locked (Target-Instant Pacing)** |
-| **In-Memory Seam Migrations** | 100% Retained | **21,875 transitions / 0 lost entities** | **100% Zero-Loss Accounting** |
+| **Server Replication Egress per Client** | < 1,228.8 B/s (1.2 KB/s) | **1,203.48 B/s (1.18 KB/s)** | **Conforms to Wire Budget** |
+| **Client Input Ingress per Bot** | < 1,228.8 B/s (1.2 KB/s) | **15.43 B/s (0.02 KB/s)** | **98.7% Under Budget (Dead Reckoning)** |
+| **Authoritative Tick Cadence** | 20.0 Hz (50.0 ms) | **20.0 Hz (50.0 ms +/- 5.0 ms)** | **Locked (Target-Instant Pacing)** |
+| **In-Memory Seam Migrations** | 100% Retained | **1,580 transitions / 0 lost entities** | **100% Zero-Loss Accounting** |
 | **Tick Load Shedding Level** | Level 0 (Normal) | **Level 0 (Zero Overruns)** | **100% Simulation Headroom** |
 | **Memory Leak Audit (100k Ticks)** | Flat Heap (0 Leaks) | **100,000 ticks sustained / 0 leaks** | **Verified Stable Heap** |
 
@@ -164,7 +165,7 @@ Measured via native high-precision hardware timer suite (`crates/eidolon-server/
 | `SpatialHashGrid::query_radius_batched` | 4-Wide SIMD 9-Cell Neighborhood Query | **4,969 ns** (4.97 µs) | ~201 Thousand queries/sec |
 | `kinematics::extrapolate` | Second-Order Intent Extrapolation | **9.00 ns** | ~111 Million ops/sec |
 | `kinematics::should_dispatch_update` | Predictive Velocity Deadband Check | **4.53 ns** | ~220 Million ops/sec |
-| `SpscPacketQueue::try_push + try_pop` | Lock-Free Inter-Thread Ring Roundtrip | **62.43 ns** | ~16.0 Million ops/sec |
+| `SpscPacketQueue::try_push + try_pop` | Bounded SPSC Queue Roundtrip (Mutex-Synchronized) | **62.43 ns** | ~16.0 Million ops/sec |
 
 ---
 
@@ -196,7 +197,7 @@ eidolon/
 | **`eidolon-net`** | Low-latency UDP transport layer. Register-width bitstreams, 12-byte zero-copy packet framing, sequenced unreliable channels, ordered reliable channels with sliding-window selective ACKs, and bounded ring buffers. |
 | **`eidolon-spatial`** | Cache-conscious 2D/3D spatial hash grid with 64-byte aligned bucket headers, intrusive slot-map indexing, 4-wide SIMD batched radius queries, and dynamic 3-tier AoI frequency state machines. |
 | **`eidolon-world`** | The world manager. Coordinates seamless zone boundaries with 16m overlapping seams, atomic in-memory entity handoffs, ephemeral dungeon instances (<50ms lifecycle), cold-state account hibernation, and `pak-delta` micro-patching negotiation. |
-| **`eidolon-server`** | The production headless server binary. Integrates native non-blocking UDP I/O worker threads with a synchronous 20 Hz simulation tick loop, target-instant drift-free pacing, SPSC lock-free queues, and Agones Kubernetes lifecycle hooks. |
+| **`eidolon-server`** | The production headless server binary. Integrates native non-blocking UDP I/O worker threads with a synchronous 20 Hz simulation tick loop, target-instant drift-free pacing, bounded SPSC memory-safe queues, and Agones Kubernetes lifecycle hooks. |
 
 ---
 
