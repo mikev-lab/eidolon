@@ -13,6 +13,8 @@ pub mod config;
 pub mod io;
 pub mod metrics;
 pub mod queue;
+pub mod rolling;
+pub mod soak;
 pub mod tick;
 
 // Re-export primary types for ergonomic engine and integration test consumption.
@@ -28,4 +30,6 @@ pub use metrics::{
     LatencyHistogram, PrometheusExporter, ServerMetrics, ZoneMetrics, DEFAULT_TICK_BUCKETS_MICROS,
 };
 pub use queue::{NetworkPacket, SpscPacketQueue};
+pub use rolling::{RollingClusterNode, RollingUpgradeSimulator, UpgradeSession};
+pub use soak::{SoakConfig, SoakTelemetry, SoakTestRunner};
 pub use tick::{TickCoordinator, TickMetrics, DEFAULT_TICK_MICROS};

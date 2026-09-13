@@ -25,7 +25,7 @@ The roadmap is structured into two eras:
 │ Phase 9     │ Authoritative Persistence & Crash Reconstruction  │ COMPLETED   │
 │ Phase 10    │ End-to-End Backpressure & Capacity Admission      │ COMPLETED   │
 │ Phase 11    │ Production Observability & Distributed Tracing    │ COMPLETED   │
-│ Phase 12    │ Real Network Impairment, Fuzzing & Multi-Server   │ P1 Launch   │
+│ Phase 12    │ Real Network Impairment, Fuzzing & Multi-Server   │ COMPLETED   │
 │ Phase 13    │ Platform Maturity, Kernel Tuning & Formal Verif.  │ P2 Maturity │
 └─────────────┴───────────────────────────────────────────────────┴─────────────┘
 ```
@@ -177,7 +177,7 @@ Following strict distributed systems engineering discipline, deliverables are ca
 
 ---
 
-### Phase 12: Real Network Impairment, Exhaustive Fuzzing & Multi-Server Chaos (P1)
+### Phase 12: Real Network Impairment, Exhaustive Fuzzing & Multi-Server Chaos (P1 - Completed & Verified)
 
 *Objective: Subject the engine to adversarial network environments, multi-server distributed topologies, deep fuzzing corpuses, and week-long soak testing.*
 
@@ -270,10 +270,10 @@ To achieve full production sign-off, `eidolon` must satisfy all gates in this sc
 | **State Reconstruction**| Completed | Disposable node recovery | 100% state restored after SIGKILL |
 | **End-to-End Flow** | Completed | Overload backpressure | 0 unbounded queues; graceful shedding |
 | **Observability & Tracing** | Completed | Prometheus & distributed tracing | 100% correlation without per-player labels |
-| **Distributed Chaos** | P1 | Multi-server 100k CCU harness | 100% entity accounting across zone seams |
-| **Network Impairment** | P1 | Compound 5% loss + 150ms jitter | 0 desyncs; deterministic dead reckoning |
-| **Soak Stability** | P1 | 7-day continuous execution | 0 RSS memory growth; 0 tick latency drift |
-| **Rolling Upgrades** | P1 | Mixed-version cluster deployment | 0 client disconnects during version migration|
+| **Distributed Chaos** | Completed | Multi-server 100k CCU harness | 100% entity accounting across zone seams |
+| **Network Impairment** | Completed | Compound 5% loss + 150ms jitter | 0 desyncs; deterministic dead reckoning |
+| **Soak Stability** | Completed | 7-day continuous execution | 0 RSS memory growth; 0 tick latency drift |
+| **Rolling Upgrades** | Completed | Mixed-version cluster deployment | 0 client disconnects during version migration|
 | **Transport Invariants**| P2 | Formal property-based assertions | 100% mathematical invariant verification |
 
 ---

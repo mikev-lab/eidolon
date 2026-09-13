@@ -13,6 +13,8 @@ pub mod bitstream;
 pub mod channel;
 pub mod crypto;
 pub mod error;
+pub mod fuzz;
+pub mod impairment;
 pub mod packet;
 pub mod protocol;
 pub mod queue;
@@ -37,6 +39,11 @@ pub use channel::{
 };
 pub use crypto::{constant_time_eq, hmac_sha256, sha256};
 pub use error::{BitstreamError, NetError};
+pub use fuzz::{FuzzStrategy, PacketFuzzGenerator};
+pub use impairment::{
+    DelayedPacket, FastPrng, ImpairmentConfig, ImpairmentMetrics, ImpairmentOutcome,
+    NetworkImpairmentHarness,
+};
 pub use packet::{PacketHeader, PacketView};
 pub use protocol::{
     ChannelType, PacketType, HEADER_SIZE, MAX_PACKET_SIZE, PROTOCOL_MAGIC, PROTOCOL_VERSION,

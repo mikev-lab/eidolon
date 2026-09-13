@@ -6,6 +6,7 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod cluster;
 pub mod companion;
 pub mod error;
 pub mod hibernation;
@@ -17,6 +18,10 @@ pub mod wal;
 pub mod zone;
 
 // Re-export primary types for ergonomic crate consumption.
+pub use cluster::{
+    ClusterTickMetrics, ClusterTopologyConfig, ClusterZoneNode, MultiServerClusterHarness,
+    MAX_CLUSTER_NODES, MAX_IN_FLIGHT_MIGRATIONS,
+};
 pub use companion::{
     AssetManifestDigest, PatchNegotiationState, PatchNegotiator, ZoneAssetRequirement,
 };
