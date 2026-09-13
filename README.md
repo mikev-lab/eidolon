@@ -286,6 +286,7 @@ In-depth engineering specifications, mathematical proofs, and operational runboo
 * **[Operations, Observability & Security (`docs/OPERATIONS_AND_SECURITY.md`)](./docs/OPERATIONS_AND_SECURITY.md):** Adversarial threat modeling, SRE phase latency telemetry, protocol semantic versioning, and Agones lifecycle hooks.
 * **[Linux Kernel & Low-Level UDP Tuning (`docs/LINUX_KERNEL_TUNING.md`)](./docs/LINUX_KERNEL_TUNING.md):** Production OS socket buffer tuning, NIC multi-queue RSS, and Agones host networking runbook.
 * **[Per-Player Strict Memory Budget (`docs/MEMORY_BUDGET.md`)](./docs/MEMORY_BUDGET.md):** Byte-exact accounting per player connection (<48 KB/CCU) and bounded memory proofs for 100,000 CCU.
+* **[Architectural Comparison (`docs/COMPARATIVE_ANALYSIS.md`)](./docs/COMPARATIVE_ANALYSIS.md):** Comparative analysis contrasting Eidolon, Nakama (Heroic Labs), Colyseus, and SpacetimeDB across wire, simulation, and scale axes.
 
 ---
 

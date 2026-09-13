@@ -484,8 +484,11 @@ impl TransactionManager {
             journal,
         )?;
 
-        if durability == CommitDurability::LocalDiskFsync {
-            journal.flush_pending()?;
+        match durability {
+            CommitDurability::InMemoryBuffered => {}
+            CommitDurability::LocalDiskFsync | CommitDurability::DistributedQuorum => {
+                journal.flush_pending()?;
+            }
         }
 
         Ok(lsn)

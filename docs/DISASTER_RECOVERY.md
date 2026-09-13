@@ -85,11 +85,23 @@ When a process is abruptly terminated mid-write, partial bytes may be left at th
 3. **Fencing:** Any stale mutation packets bearing old generation tokens are rejected with `WorldError::StaleSessionMutation`.
 4. **Reconciliation:** Target node assumes authoritative ownership; source node rolls back unconfirmed migrations.
 
+### 4.3 Scenario C: Complete Host Machine Loss & Cross-AZ Quorum Failover
+1. **Detection:** Entire physical machine or availability zone (AZ-1) suffers catastrophic power loss, hardware failure, or network severance.
+2. **Quorum Invariant:** Transactions committed under `CommitDurability::DistributedQuorum` require acknowledgment from a majority of storage nodes ($W \ge \lceil(N + 1) / 2\rceil$). Any transaction acknowledged to a client is guaranteed to reside on non-volatile storage across at least one surviving standby node in another failure domain (AZ-2 / AZ-3).
+3. **Execution:**
+   - Standby node in AZ-2 detects primary heartbeat loss.
+   - Standby executes `ReplicatedJournalSink::recover_quorum` across surviving replica sinks, reconstructing the canonical log without uncommitted partial writes.
+   - Standby executes `ReplicatedJournalSink::promote_to_primary`, assuming authoritative zone ownership.
+   - Standby binds UDP socket and resumes simulation with **RPO = 0 across complete host and AZ failure**.
+4. **Verification:** Zero acknowledged transactions lost; new transactions progress monotonically.
+
 ---
 
 ## 5. Verification & Test Coverage
 
 The durability and disaster recovery mechanisms are validated by automated continuous integration suites:
 - `tests/durable_commit_semantics.rs`: Tests physical `fdatasync` guarantees, simulated power cutoffs, and truncated write recovery.
+- `tests/multi_node_replicated_durability.rs`: Tests distributed quorum persistence, catastrophic primary AZ loss, and standby replica promotion with RPO = 0.
 - `tests/real_socket_cluster_and_sigkill.rs`: Tests child worker processes abruptly killed via POSIX `SIGKILL` (`kill -9`) over real loopback UDP sockets.
+- `tests/multi_process_cluster_partition.rs`: Tests 3-node real UDP socket cluster under network partition, migration timeout rollback, and SIGKILL restart.
 - `tests/zone_crash_reconstruction.rs`: Tests bit-for-bit reconstruction parity between in-memory state and recovered WAL replay.

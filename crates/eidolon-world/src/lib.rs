@@ -14,6 +14,7 @@ pub mod hibernation;
 pub mod instance;
 pub mod partition;
 pub mod reconstruction;
+pub mod replicated_journal;
 pub mod transaction;
 pub mod wal;
 pub mod zone;
@@ -43,6 +44,7 @@ pub use reconstruction::{
     decode_position_payload, encode_position_payload, reconstruct_zone_from_wal, CheckpointEntity,
     ZoneCheckpoint,
 };
+pub use replicated_journal::{ReplicatedJournalSink, ReplicationMode};
 pub use transaction::{
     AccountState, InventoryItem, TransactionManager, TransactionOp, TransactionStatus,
     LOCK_INVENTORY, LOCK_WALLET, MAX_DEDUP_HISTORY, MAX_INVENTORY_SLOTS,

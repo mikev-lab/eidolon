@@ -112,6 +112,9 @@ pub struct RealSocketZoneNode {
     socket: UdpSocket,
     local_addr: SocketAddr,
     peer_addr: Option<SocketAddr>,
+    peer_routes: HashMap<u32, SocketAddr>,
+    blocked_zones: Vec<u32>,
+    pending_migrations: HashMap<u64, (u32, Vec<u8>, std::time::Instant)>,
     zone_id: u32,
     journal: Option<DurableFileJournal>,
     entities: HashMap<u64, Vec<u8>>,
@@ -142,6 +145,9 @@ impl RealSocketZoneNode {
             socket,
             local_addr,
             peer_addr: None,
+            peer_routes: HashMap::new(),
+            blocked_zones: Vec::new(),
+            pending_migrations: HashMap::new(),
             zone_id,
             journal,
             entities: HashMap::new(),
@@ -151,9 +157,32 @@ impl RealSocketZoneNode {
         })
     }
 
-    /// Sets the destination peer socket address for cluster communication.
+    /// Sets the destination peer socket address for default cluster communication.
     pub fn set_peer_addr(&mut self, peer_addr: SocketAddr) {
         self.peer_addr = Some(peer_addr);
+    }
+
+    /// Registers a routing destination for a specific target zone in a multi-node cluster.
+    pub fn add_peer_route(&mut self, target_zone_id: u32, peer_addr: SocketAddr) {
+        self.peer_routes.insert(target_zone_id, peer_addr);
+    }
+
+    /// Declares a simulated network partition against a specific zone, dropping packets to/from it.
+    pub fn partition_zone(&mut self, target_zone_id: u32) {
+        if !self.blocked_zones.contains(&target_zone_id) {
+            self.blocked_zones.push(target_zone_id);
+        }
+    }
+
+    /// Restores network connectivity by healing a declared partition against a specific zone.
+    pub fn heal_zone(&mut self, target_zone_id: u32) {
+        self.blocked_zones.retain(|&z| z != target_zone_id);
+    }
+
+    /// Returns true if traffic to or from the specified zone is currently partitioned.
+    #[inline]
+    pub fn is_partitioned(&self, target_zone_id: u32) -> bool {
+        self.blocked_zones.contains(&target_zone_id)
     }
 
     /// Returns the bound local socket address.
@@ -167,17 +196,51 @@ impl RealSocketZoneNode {
         self.entities.insert(entity_id, state);
     }
 
-    /// Returns true if this zone contains the entity.
+    /// Returns true if this zone contains the entity in active state.
     #[inline]
     pub fn has_entity(&self, entity_id: u64) -> bool {
         self.entities.contains_key(&entity_id)
     }
 
-    /// Dispatches a cross-zone entity migration over the real OS UDP socket.
+    /// Returns the count of pending in-flight migrations awaiting remote ACK.
+    #[inline]
+    pub fn pending_migration_count(&self) -> usize {
+        self.pending_migrations.len()
+    }
+
+    /// Dispatches a cross-zone entity migration over the real OS UDP socket to the default peer.
     pub fn dispatch_migration(&mut self, entity_id: u64) -> Result<(), io::Error> {
+        let default_target = self.zone_id.wrapping_add(1);
+        self.dispatch_migration_to(default_target, entity_id)
+    }
+
+    /// Dispatches a cross-zone entity migration to a specific target zone over the real OS UDP socket.
+    ///
+    /// Stores the entity in a pending migration buffer until acknowledged. If the target zone is partitioned
+    /// or unreachable, calling `check_migration_timeouts` safely rolls back ownership to the local node.
+    pub fn dispatch_migration_to(
+        &mut self,
+        target_zone_id: u32,
+        entity_id: u64,
+    ) -> Result<(), io::Error> {
+        if self.is_partitioned(target_zone_id) {
+            return Err(io::Error::new(
+                ErrorKind::ConnectionRefused,
+                format!("Network partition active against Zone {target_zone_id}"),
+            ));
+        }
+
         let peer = self
-            .peer_addr
-            .ok_or_else(|| io::Error::new(ErrorKind::NotConnected, "No peer address configured"))?;
+            .peer_routes
+            .get(&target_zone_id)
+            .copied()
+            .or(self.peer_addr)
+            .ok_or_else(|| {
+                io::Error::new(
+                    ErrorKind::NotConnected,
+                    "No peer route configured for target",
+                )
+            })?;
 
         let state = self
             .entities
@@ -188,8 +251,14 @@ impl RealSocketZoneNode {
             opcode: OP_MIGRATE,
             identifier: entity_id,
             sequence: self.zone_id as u64,
-            payload: state,
+            payload: state.clone(),
         };
+
+        // Record into pending migration buffer with dispatch timestamp
+        self.pending_migrations.insert(
+            entity_id,
+            (target_zone_id, state, std::time::Instant::now()),
+        );
 
         let mut buf = [0u8; 512];
         let len = packet.encode(&mut buf)?;
@@ -197,6 +266,29 @@ impl RealSocketZoneNode {
         self.packets_sent += 1;
 
         Ok(())
+    }
+
+    /// Scans pending migrations and rolls back any unacknowledged migrations exceeding the timeout.
+    ///
+    /// Restores the entity state back into `self.entities`, preventing entity loss under network partitions.
+    pub fn check_migration_timeouts(&mut self, timeout: std::time::Duration) -> usize {
+        let now = std::time::Instant::now();
+        let mut timed_out_ids = Vec::new();
+
+        for (&entity_id, (_, _, timestamp)) in self.pending_migrations.iter() {
+            if now.duration_since(*timestamp) >= timeout {
+                timed_out_ids.push(entity_id);
+            }
+        }
+
+        let rolled_back_count = timed_out_ids.len();
+        for id in timed_out_ids {
+            if let Some((_, state, _)) = self.pending_migrations.remove(&id) {
+                self.entities.insert(id, state);
+            }
+        }
+
+        rolled_back_count
     }
 
     /// Executes a durable transaction, writing to the physical journal and executing `fdatasync`.
@@ -237,6 +329,13 @@ impl RealSocketZoneNode {
                 Ok((len, peer)) => {
                     self.packets_received += 1;
                     if let Ok(packet) = RealSocketPacket::decode(&buf[..len]) {
+                        let sender_zone = packet.sequence as u32;
+
+                        // Check if incoming traffic from this source zone is partitioned
+                        if self.is_partitioned(sender_zone) {
+                            continue;
+                        }
+
                         match packet.opcode {
                             OP_MIGRATE => {
                                 // Adopt entity into this zone
@@ -246,7 +345,7 @@ impl RealSocketZoneNode {
                                 let ack = RealSocketPacket {
                                     opcode: OP_MIGRATE_ACK,
                                     identifier: packet.identifier,
-                                    sequence: packet.sequence,
+                                    sequence: self.zone_id as u64,
                                     payload: Vec::new(),
                                 };
                                 let mut ack_buf = [0u8; 64];
@@ -256,7 +355,8 @@ impl RealSocketZoneNode {
                                 }
                             }
                             OP_MIGRATE_ACK => {
-                                // Migration confirmed by remote node
+                                // Migration confirmed by remote node: clear from pending
+                                self.pending_migrations.remove(&packet.identifier);
                             }
                             _ => {}
                         }
@@ -430,5 +530,55 @@ mod tests {
 
         // Poll Node 1 to receive migration ACK
         let _ = node1.poll_network();
+    }
+
+    #[test]
+    fn test_partition_isolation_and_migration_timeout_rollback() {
+        let mut node1 = RealSocketZoneNode::bind(0, 1, None::<&str>).expect("Node 1 bind");
+        let mut node2 = RealSocketZoneNode::bind(0, 2, None::<&str>).expect("Node 2 bind");
+
+        let addr1 = node1.local_addr();
+        let addr2 = node2.local_addr();
+
+        node1.add_peer_route(2, addr2);
+        node2.add_peer_route(1, addr1);
+
+        node1.spawn_entity(5001, vec![1, 2, 3]);
+
+        // Declare partition from Node 1 against Zone 2
+        node1.partition_zone(2);
+        assert!(node1.is_partitioned(2));
+
+        // Attempting to migrate to partitioned zone fails immediately
+        let err = node1.dispatch_migration_to(2, 5001);
+        assert!(err.is_err());
+        assert!(node1.has_entity(5001));
+
+        // Heal partition
+        node1.heal_zone(2);
+        assert!(!node1.is_partitioned(2));
+
+        // Now partition on the receiving side (Node 2 partitions Zone 1)
+        node2.partition_zone(1);
+
+        // Node 1 dispatches migration
+        node1
+            .dispatch_migration_to(2, 5001)
+            .expect("Dispatch to peer");
+        assert_eq!(node1.pending_migration_count(), 1);
+        assert!(!node1.has_entity(5001));
+
+        // Node 2 polls network, but drops incoming packet from partitioned Zone 1
+        let _ = node2.poll_network();
+        assert!(!node2.has_entity(5001));
+
+        // Node 1 checks timeouts (simulating 0ms timeout for instant rollback in test)
+        let rolled_back = node1.check_migration_timeouts(std::time::Duration::from_millis(0));
+        assert_eq!(rolled_back, 1);
+        assert_eq!(node1.pending_migration_count(), 0);
+        assert!(
+            node1.has_entity(5001),
+            "Entity must be safely restored to local zone upon migration timeout"
+        );
     }
 }

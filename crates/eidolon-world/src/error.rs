@@ -108,6 +108,13 @@ pub enum WorldError {
     },
     /// Disposable zone crash reconstruction failed.
     ReconstructionFailed(&'static str),
+    /// Distributed quorum replication failed to reach required acknowledgment threshold.
+    QuorumFailed {
+        /// Number of acknowledgments required.
+        required: usize,
+        /// Number of acknowledgments successfully obtained.
+        actual: usize,
+    },
 }
 
 impl fmt::Display for WorldError {
@@ -174,6 +181,12 @@ impl fmt::Display for WorldError {
             }
             Self::ReconstructionFailed(reason) => {
                 write!(f, "Zone crash reconstruction failed: {reason}")
+            }
+            Self::QuorumFailed { required, actual } => {
+                write!(
+                    f,
+                    "Quorum replication failed: required {required} acks, obtained {actual}"
+                )
             }
         }
     }
