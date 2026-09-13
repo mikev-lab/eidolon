@@ -13,6 +13,7 @@ pub mod config;
 pub mod io;
 pub mod memory_budget;
 pub mod metrics;
+pub mod multi_process;
 pub mod platform_bench;
 pub mod queue;
 pub mod rolling;
@@ -34,6 +35,10 @@ pub use memory_budget::{
 };
 pub use metrics::{
     LatencyHistogram, PrometheusExporter, ServerMetrics, ZoneMetrics, DEFAULT_TICK_BUCKETS_MICROS,
+};
+pub use multi_process::{
+    run_worker_if_requested, ProcessSupervisor, RealSocketPacket, RealSocketZoneNode,
+    CLUSTER_SOCKET_MAGIC, OP_HEARTBEAT, OP_MIGRATE, OP_MIGRATE_ACK, OP_TRANSACTION,
 };
 pub use platform_bench::{BenchmarkMetric, PlatformBenchmarkReport, PlatformBenchmarkRunner};
 pub use queue::{NetworkPacket, SpscPacketQueue};

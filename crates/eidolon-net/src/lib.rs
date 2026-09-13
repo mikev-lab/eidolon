@@ -39,7 +39,7 @@ pub use bitstream::{BitReader, BitWriter};
 pub use channel::{
     IncomingReliablePacket, PendingReliablePacket, ReliableChannel, UnreliableSequencer,
 };
-pub use crypto::{constant_time_eq, hmac_sha256, sha256};
+pub use crypto::{constant_time_eq, hmac_sha256, sha256, CryptoProvider, NativeCryptoProvider};
 pub use error::{BitstreamError, NetError};
 pub use fuzz::{FuzzStrategy, PacketFuzzGenerator};
 pub use impairment::{

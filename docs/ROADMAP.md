@@ -26,7 +26,8 @@ The roadmap is structured into two eras:
 │ Phase 10    │ End-to-End Backpressure & Capacity Admission      │ COMPLETED   │
 │ Phase 11    │ Production Observability & Distributed Tracing    │ COMPLETED   │
 │ Phase 12    │ Real Network Impairment, Fuzzing & Multi-Server   │ COMPLETED   │
-│ Phase 13    │ Platform Maturity, Kernel Tuning & Formal Verif.  │ COMPLETED   │
+│ Phase 13    │ Platform Maturity, Kernel Tuning & Property Invar.│ COMPLETED   │
+│ Phase 14    │ Durability, Crypto Validation & Identity Pipeline │ COMPLETED   │
 └─────────────┴───────────────────────────────────────────────────┴─────────────┘
 ```
 
@@ -38,7 +39,7 @@ Following strict distributed systems engineering discipline, deliverables are ca
 
 - **P0 (Critical Prerequisites):** Hard prerequisites before exposing the server to real players or public networks. Failure causes lost state, dupe exploits, unauthorized takeovers, split-brain divergence, or unrecoverable crashes.
 - **P1 (Commercial Launch Gate):** Hard requirements for an open commercial production launch. Includes distributed multi-server load testing, real-world network degradation, end-to-end backpressure, and zero-downtime rolling upgrades.
-- **P2 (Platform Maturity & Excellence):** Engineering maturity standards including multi-architecture CPU profiling, low-level OS kernel socket tuning, and formal property-based verification.
+- **P2 (Platform Maturity & Excellence):** Engineering maturity standards including multi-architecture CPU profiling, low-level OS kernel socket tuning, and property-based invariant verification.
 
 ---
 
@@ -213,9 +214,9 @@ Following strict distributed systems engineering discipline, deliverables are ca
 
 ---
 
-### Phase 13: Platform Maturity, Kernel Tuning & Formal Verification (P2 - Completed & Verified)
+### Phase 13: Platform Maturity, Kernel Tuning & Property-Based Invariant Verification (P2 - Completed & Verified)
 
-*Objective: Maximize hardware performance across CPU architectures, provide production OS kernel tuning guides, validate wire egress via eBPF/pcap, and formally verify transport invariants.*
+*Objective: Maximize hardware performance across CPU architectures, provide production OS kernel tuning guides, validate wire egress via eBPF/pcap, and verify transport invariants via generative property testing.*
 
 - **Milestone 13.1: Multi-Platform Architecture & Benchmark Matrix**
   - Comprehensive benchmarking across diverse CPU microarchitectures:
@@ -245,12 +246,35 @@ Following strict distributed systems engineering discipline, deliverables are ca
 - **Milestone 13.5: Security Sanitizers & Miri Audits**
   - Continuous integration execution under AddressSanitizer (ASan) and UndefinedBehaviorSanitizer (UBSan).
   - Exhaustive Miri verification (`cargo miri test`) asserting complete memory safety and absence of undefined behavior.
-- **Milestone 13.6: Property-Based Testing & Formal Transport Invariants**
+- **Milestone 13.6: Property-Based Testing & Transport Invariants**
   - Property-based testing (using native randomized generators) asserting:
     * ACKs can never acknowledge unsent sequence numbers.
     * Sequence progression is strictly monotonic modulo $2^{16}$.
     * Pending retransmission bytes never exceed configured capacity.
     * Duplicate packets are strictly idempotent.
+
+### Phase 14: Production Durability, Cryptographic Validation, Real Socket Cluster Chaos & Identity Authorization (P0/P1 - Completed & Verified)
+
+*Objective: Enforce exact RPO = 0 physical fdatasync commit semantics before client acknowledgment, validate zero-dependency cryptography against NIST CAVP and RFC 4231 vectors with pluggable CryptoProvider, test real OS loopback UDP sockets under POSIX SIGKILL termination, and enforce the 3-tier Account -> Session -> Character authorization hierarchy.*
+
+- **Milestone 14.1: Physical Durability & RPO = 0 Commit Contract**
+  - [x] Implement append-only `DurableFileJournal` with 8-byte framing magic (`0xE1D0_4A52`), record length, and physical `fdatasync` (`sync_data`).
+  - [x] Integrate `CommitDurability::LocalDiskFsync` into `TransactionManager::execute_transaction_with_durability`.
+  - [x] Prove that acknowledged transactions are physically durable and survive sudden process crash, while unacknowledged transactions are safely discarded without panics.
+  - [x] Author comprehensive disaster recovery specification (`docs/DISASTER_RECOVERY.md`) with explicit quantitative RPO/RTO metrics.
+- **Milestone 14.2: Cryptographic Validation & Pluggable Provider**
+  - [x] Validate native first-principles SHA-256 and HMAC-SHA256 against all 7 official RFC 4231 test vectors and NIST CAVP short, long, and multi-block vectors.
+  - [x] Enforce compiler black_box barrier in `constant_time_eq` to eliminate timing side-channels.
+  - [x] Implement abstract `CryptoProvider` trait and default `NativeCryptoProvider` for seamless enterprise HSM / FIPS-140 pluggability.
+- **Milestone 14.3: Real OS Socket Cluster & POSIX SIGKILL Chaos**
+  - [x] Implement `RealSocketZoneNode` communicating over real OS loopback UDP sockets (`std::net::UdpSocket` on `127.0.0.1`).
+  - [x] Verify cross-zone entity migration and two-way wire framing across real OS sockets.
+  - [x] Implement `ProcessSupervisor` spawning real child worker processes and terminating them abruptly via POSIX `SIGKILL` (`kill -9`).
+  - [x] Verify zero corrupted state, complete WAL replay recovery, and instant restart.
+- **Milestone 14.4: 3-Tier Identity & Character Authorization Pipeline**
+  - [x] Implement strongly-typed `AccountId`, `CharacterId`, and `SessionTicket` in `eidolon-core`.
+  - [x] Enforce concurrent login revocation: new session authentication immediately fences prior session tokens via monotonic generation counters.
+  - [x] Enforce cross-account write fencing: callers cannot select or mutate characters belonging to another account.
 
 ---
 
@@ -274,7 +298,11 @@ To achieve full production sign-off, `eidolon` must satisfy all gates in this sc
 | **Network Impairment** | Completed | Compound 5% loss + 150ms jitter | 0 desyncs; deterministic dead reckoning |
 | **Soak Stability** | Completed | 7-day continuous execution | 0 RSS memory growth; 0 tick latency drift |
 | **Rolling Upgrades** | Completed | Mixed-version cluster deployment | 0 client disconnects during version migration|
-| **Transport Invariants**| Completed | Formal property-based assertions | 100% mathematical invariant verification |
+| **Transport Invariants**| Completed | Property-based invariant assertions | 100% mathematical invariant verification |
+| **Physical Durability** | Completed | Physical fdatasync before client ACK | RPO = 0 across process SIGKILL / host crash |
+| **Crypto Validation**  | Completed | RFC 4231 & NIST CAVP standard vectors | Bit-exact cryptographic standard parity |
+| **Real Socket Cluster** | Completed | Real OS loopback UDP sockets & SIGKILL | 100% migration & crash recovery verified |
+| **Identity Pipeline**   | Completed | 3-tier Account -> Session -> Character | 100% concurrent revocation & cross-account fencing |
 
 ---
 

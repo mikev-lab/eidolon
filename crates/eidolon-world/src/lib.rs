@@ -8,6 +8,7 @@
 
 pub mod cluster;
 pub mod companion;
+pub mod durable_journal;
 pub mod error;
 pub mod hibernation;
 pub mod instance;
@@ -25,6 +26,7 @@ pub use cluster::{
 pub use companion::{
     AssetManifestDigest, PatchNegotiationState, PatchNegotiator, ZoneAssetRequirement,
 };
+pub use durable_journal::{CommitDurability, DurableFileJournal, JOURNAL_MAGIC};
 pub use error::{InstanceId, WorldError, ZoneId};
 pub use hibernation::{
     compute_adler32, hydrate_player_into_zone, CharacterRecord, HibernationHeader, PityState,

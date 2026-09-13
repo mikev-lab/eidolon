@@ -316,8 +316,44 @@ pub fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
         let byte_a = a.get(i).copied().unwrap_or(0);
         let byte_b = b.get(i).copied().unwrap_or(0);
         diff |= byte_a ^ byte_b;
+        diff = core::hint::black_box(diff);
     }
     diff == 0
+}
+
+/// Pluggable cryptographic provider abstraction.
+///
+/// Enables seamless substitution of FIPS-140 certified HSM or hardware-accelerated
+/// cryptographic libraries in enterprise or zero-trust deployment environments without
+/// modifying protocol framing, packet authentication, or server logic.
+pub trait CryptoProvider: Send + Sync {
+    /// Computes the 32-byte SHA-256 digest of input data.
+    fn sha256(&self, data: &[u8]) -> [u8; 32];
+    /// Computes the 32-byte HMAC-SHA-256 message authentication code.
+    fn hmac_sha256(&self, key: &[u8], data: &[u8]) -> [u8; 32];
+    /// Compares two 32-byte digests in constant time to prevent timing side-channels.
+    fn constant_time_eq(&self, a: &[u8; 32], b: &[u8; 32]) -> bool;
+}
+
+/// Default zero-dependency native implementation of the `CryptoProvider` trait.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NativeCryptoProvider;
+
+impl CryptoProvider for NativeCryptoProvider {
+    #[inline]
+    fn sha256(&self, data: &[u8]) -> [u8; 32] {
+        sha256(data)
+    }
+
+    #[inline]
+    fn hmac_sha256(&self, key: &[u8], data: &[u8]) -> [u8; 32] {
+        hmac_sha256(key, data)
+    }
+
+    #[inline]
+    fn constant_time_eq(&self, a: &[u8; 32], b: &[u8; 32]) -> bool {
+        constant_time_eq(a, b)
+    }
 }
 
 #[cfg(test)]
@@ -379,6 +415,80 @@ mod tests {
     }
 
     #[test]
+    fn test_rfc4231_hmac_sha256_case3() {
+        let key = [0xaau8; 20];
+        let data = [0xddu8; 50];
+        let mac = hmac_sha256(&key, &data);
+        let hex = to_hex(&mac);
+        assert_eq!(
+            hex,
+            "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe"
+        );
+    }
+
+    #[test]
+    fn test_rfc4231_hmac_sha256_case4() {
+        let key: Vec<u8> = (1..=25).collect();
+        let data = [0xcdu8; 50];
+        let mac = hmac_sha256(&key, &data);
+        let hex = to_hex(&mac);
+        assert_eq!(
+            hex,
+            "82558a389a443c0ea4cc819899f2083a85f0faa3e578f8077a2e3ff46729665b"
+        );
+    }
+
+    #[test]
+    fn test_rfc4231_hmac_sha256_case5() {
+        let key = [0x0cu8; 20];
+        let data = b"Test With Truncation";
+        let mac = hmac_sha256(&key, data);
+        let truncated_hex = to_hex_16(&mac[..16]);
+        assert_eq!(truncated_hex, "a3b6167473100ee06e0c796c2955552b");
+    }
+
+    #[test]
+    fn test_rfc4231_hmac_sha256_case6() {
+        let key = [0xaau8; 131];
+        let data = b"Test Using Larger Than Block-Size Key - Hash Key First";
+        let mac = hmac_sha256(&key, data);
+        let hex = to_hex(&mac);
+        assert_eq!(
+            hex,
+            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+        );
+    }
+
+    #[test]
+    fn test_rfc4231_hmac_sha256_case7() {
+        let key = [0xaau8; 131];
+        let data = b"This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm.";
+        let mac = hmac_sha256(&key, data);
+        let hex = to_hex(&mac);
+        assert_eq!(
+            hex,
+            "9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2"
+        );
+    }
+
+    #[test]
+    fn test_crypto_provider_abstraction() {
+        let provider = NativeCryptoProvider;
+        let digest = provider.sha256(b"abc");
+        assert_eq!(
+            to_hex(&digest),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let key = b"Jefe";
+        let mac = provider.hmac_sha256(key, b"what do ya want for nothing?");
+        assert_eq!(
+            to_hex(&mac),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+        assert!(provider.constant_time_eq(&digest, &digest));
+    }
+
+    #[test]
     fn test_constant_time_eq() {
         let a = [42u8; 32];
         let mut b = [42u8; 32];
@@ -389,6 +499,15 @@ mod tests {
 
     fn to_hex(bytes: &[u8; 32]) -> String {
         let mut s = String::with_capacity(64);
+        for &b in bytes {
+            use std::fmt::Write;
+            let _ = write!(s, "{b:02x}");
+        }
+        s
+    }
+
+    fn to_hex_16(bytes: &[u8]) -> String {
+        let mut s = String::with_capacity(32);
         for &b in bytes {
             use std::fmt::Write;
             let _ = write!(s, "{b:02x}");

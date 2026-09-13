@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use eidolon_core::lock::{GenerationLockRegistry, LockError, LockToken};
 
+use crate::durable_journal::CommitDurability;
 use crate::error::WorldError;
 use crate::wal::{WriteAheadJournal, OP_CURRENCY_DELTA, OP_INVENTORY_MUTATION};
 
@@ -456,6 +457,38 @@ impl TransactionManager {
             Some(TransactionStatus::Committed { lsn }) => journal.is_flushed(*lsn),
             _ => false,
         }
+    }
+
+    /// Executes an atomic transaction under generation-lock protection with explicit durability semantics.
+    ///
+    /// When `durability` is `CommitDurability::LocalDiskFsync`, the journal is immediately flushed
+    /// to physical disk via `journal.flush_pending()` before returning `Ok(lsn)`.
+    /// Client confirmations are strictly gated on this call succeeding, delivering RPO = 0.
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_transaction_with_durability<const CAP: usize>(
+        &mut self,
+        tx_id: u64,
+        op: TransactionOp,
+        caller_session_id: u64,
+        source_token: &LockToken,
+        current_tick: u64,
+        journal: &mut WriteAheadJournal<CAP>,
+        durability: CommitDurability,
+    ) -> Result<u64, WorldError> {
+        let lsn = self.execute_transaction(
+            tx_id,
+            op,
+            caller_session_id,
+            source_token,
+            current_tick,
+            journal,
+        )?;
+
+        if durability == CommitDurability::LocalDiskFsync {
+            journal.flush_pending()?;
+        }
+
+        Ok(lsn)
     }
 }
 

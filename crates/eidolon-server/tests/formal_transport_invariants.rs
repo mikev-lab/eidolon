@@ -1,7 +1,7 @@
-//! Milestone 13.6 Automated Integration Test Suite: Formal Transport & Kinematic Invariants.
+//! Milestone 13.6 Automated Integration Test Suite: Property-Based Transport & Kinematic Invariants.
 //!
 //! Executes generative, property-based verification across 100,000+ randomized iterations
-//! using the deterministic FastPrng engine, formally asserting sequence monotonicity,
+//! using the deterministic FastPrng engine, rigorously asserting sequence monotonicity,
 //! circular arithmetic determinism, buffer capacity ceilings, and sub-millimeter quantization drift.
 
 use eidolon_core::quant::{QuantizedCellCoord, QuantizedYaw};

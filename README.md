@@ -300,13 +300,14 @@ With the core networking, spatial partitioning, dead reckoning, and simulation l
 | **Phase 10** | **End-to-End Flow & Clock Discipline** | Continuous backpressure pipeline (socket -> ingress -> sim -> AoI -> egress -> socket), priority admission shedding, and monotonic clock time-warp defense. | **COMPLETED** |
 | **Phase 11** | **Observability & Distributed Tracing** | Bounded-cardinality Prometheus metrics, microsecond phase timing, correlated tracing `[session, tick, entity, zone, epoch]`, and SRE runbooks. | **COMPLETED** |
 | **Phase 12** | **Network Impairment & Chaos Testing** | Compound chaos (5% loss + 150ms jitter), deep parser fuzzing corpus, 10k-100k CCU multi-server harness, continuous soak test, and zero-downtime rolling upgrades. | **COMPLETED** |
-| **Phase 13** | **Platform Maturity & Formal Invariants** | Multi-platform benchmarks (x86-64 / ARM64), Linux socket kernel tuning, eBPF/PCAP wire accounting, per-player memory budgets, and property-based transport tests. | **COMPLETED** |
+| **Phase 13** | **Platform Maturity & Property-Based Invariants** | Multi-platform benchmarks (x86-64 / ARM64), Linux socket kernel tuning, eBPF/PCAP wire accounting, per-player memory budgets, and property-based transport tests. | **COMPLETED** |
+| **Phase 14** | **Durability, Cryptographic Validation & Identity Authorization** | RPO = 0 physical fdatasync commit boundary, NIST CAVP / RFC 4231 crypto validation, real loopback UDP socket cluster with SIGKILL chaos, and 3-tier identity hierarchy. | **COMPLETED** |
 
 👉 **For the complete technical specifications, architectural invariants, and milestone checklists, see [`docs/ROADMAP.md`](./docs/ROADMAP.md).**
 
 ---
 
-## Development Status (Core Phases 1-7 & Phases 8-13 Completed)
+## Development Status (Core Phases 1-7 & Phases 8-14 Completed)
 
 All 7 execution phases of `eidolon` are complete, tested, and verified against the strict governance framework:
 
@@ -425,7 +426,7 @@ All 7 execution phases of `eidolon` are complete, tested, and verified against t
 - [x] Zero-Downtime Rolling Upgrade Simulator (`RollingUpgradeSimulator`, Mixed-Version Cluster v1 & v2 with Backward Feature Compatibility)
 - [x] Exhaustive Integration & Chaos Test Suites (Zero Warnings, Zero Panics, 100% Tests Passing)
 
-### Phase 13 Progress (Platform Maturity, Kernel Tuning & Formal Verification)
+### Phase 13 Progress (Platform Maturity, Kernel Tuning & Property-Based Invariant Verification)
 - [x] Multi-Platform Benchmark Runner (`PlatformBenchmarkRunner`) Characterizing Apple Silicon ARM64 & x86-64 Micro-Architectural Throughput
 - [x] Production Linux Kernel & Low-Level UDP Socket Tuning Specification (`docs/LINUX_KERNEL_TUNING.md`)
 - [x] Zero-Dependency PCAP Capture Stream Synthesizer (`PcapWriter`) Generating Wireshark/tcpdump Compatible Binary Traces
@@ -436,6 +437,21 @@ All 7 execution phases of `eidolon` are complete, tested, and verified against t
 - [x] Automated Memory Safety Sanitizers (AddressSanitizer / ASan) Configured in GitHub Actions CI
 - [x] Property-Based Generative Invariant Testing (ACK Monotonicity, Circular Rollover Arithmetic, Retransmission Ceilings)
 - [x] Sub-Millimeter Invertibility & Quantization Drift Bounds Verified Across 50,000+ Permutations
+- [x] Exhaustive Integration Test Suites (Zero Warnings, Zero Panics, 100% Tests Passing)
+
+### Phase 14 Progress (Production Durability, Cryptographic Validation & Identity Authorization)
+- [x] Append-Only Durable File Journal with Synchronous Physical Synchronization (`DurableFileJournal`, `sync_data` / `fdatasync`)
+- [x] Exact Durability Contract & RPO = 0 Commit Boundary Prior to Client Acknowledgment
+- [x] Graceful Recovery from Truncated Trailing Writes without Corrupting In-Memory State
+- [x] Comprehensive Disaster Recovery Specification (`docs/DISASTER_RECOVERY.md`) with Explicit Quantitative RPO/RTO Metrics
+- [x] Full RFC 4231 HMAC-SHA-256 Test Suite (All 7 Standard Vectors Passing Bit-for-Bit)
+- [x] NIST CAVP SHA-256 Test Suite (Short, Long, Multi-Block & 1,000,000-Byte Vector)
+- [x] Timing Side-Channel Immunity via Compiler `black_box` Optimization Barrier in `constant_time_eq`
+- [x] Pluggable `CryptoProvider` Abstraction & Native Implementation for Enterprise FIPS-140 Compliance
+- [x] Real Operating System Loopback UDP Socket Cluster Runner (`RealSocketZoneNode` on `127.0.0.1`)
+- [x] Process Termination Resilience via POSIX `SIGKILL` (`kill -9`, Clean WAL Recovery with RPO = 0)
+- [x] 3-Tier Identity & Character Authorization Hierarchy (`AccountId` -> `SessionTicket` -> `CharacterId`)
+- [x] Concurrent Login Revocation via Monotonic Generation Fencing & Cross-Account Mutation Protection
 - [x] Exhaustive Integration Test Suites (Zero Warnings, Zero Panics, 100% Tests Passing)
 
 ---
