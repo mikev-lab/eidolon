@@ -1,0 +1,29 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.20.0",
+	"FriendlyName": "Eidolon Client SDK",
+	"Description": "High-concurrency, ultra-low-bandwidth (<1 KB/s) zoned and instanced MMO world client engine for Unreal Engine 5.",
+	"Category": "Networking",
+	"CreatedBy": "Eidolon Contributors",
+	"CreatedByURL": "https://github.com/eidolon",
+	"DocsURL": "https://github.com/eidolon",
+	"MarketplaceURL": "",
+	"SupportURL": "https://github.com/eidolon",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "EidolonClient",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64",
+				"Mac",
+				"Linux"
+			]
+		}
+	]
+}

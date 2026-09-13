@@ -1,0 +1,20 @@
+{
+  "name": "com.eidolon.client",
+  "version": "0.20.0",
+  "displayName": "Eidolon MMO Client SDK",
+  "description": "High-concurrency, ultra-low-bandwidth (<1 KB/s) zoned and instanced MMO world client engine for Unity.",
+  "unity": "2021.3",
+  "author": {
+    "name": "Eidolon Contributors",
+    "url": "https://github.com/eidolon"
+  },
+  "keywords": [
+    "mmo",
+    "networking",
+    "multiplayer",
+    "eidolon",
+    "dead-reckoning",
+    "spatial-grid"
+  ],
+  "category": "Networking"
+}

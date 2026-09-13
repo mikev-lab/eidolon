@@ -107,6 +107,10 @@ fn test_zero_em_dash_invariant() {
                         || ext == "json"
                         || ext == "yml"
                         || ext == "yaml"
+                        || ext == "cs"
+                        || ext == "h"
+                        || ext == "hpp"
+                        || ext == "cpp"
                     {
                         files.push(path);
                     }
