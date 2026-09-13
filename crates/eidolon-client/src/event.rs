@@ -77,4 +77,56 @@ pub enum ClientEvent {
         /// Authoritative server heading in degrees.
         yaw_deg: f32,
     },
+    /// Active ability cast initiated with a cast bar duration.
+    CastStarted {
+        /// Entity ID performing the cast.
+        entity_id: u32,
+        /// Blueprint ability identifier.
+        ability_id: u32,
+        /// Duration of the cast in simulation ticks.
+        duration_ticks: u32,
+    },
+    /// Active cast interrupted before completion (movement, damage, stun).
+    CastInterrupted {
+        /// Entity ID whose cast was interrupted.
+        entity_id: u32,
+        /// Blueprint ability identifier.
+        ability_id: u32,
+        /// Interruption reason code (1 = Movement, 2 = Damage, 3 = Cancelled, 4 = TargetLost).
+        reason: u8,
+    },
+    /// Ability cast successfully completed.
+    CastCompleted {
+        /// Entity ID that finished the cast.
+        entity_id: u32,
+        /// Blueprint ability identifier.
+        ability_id: u32,
+    },
+    /// Chat message received from proximity, party, whisper, or global shout.
+    ChatMessageReceived {
+        /// Channel scope (0 = Proximity, 1 = Party, 2 = Whisper, 3 = Global).
+        channel: u8,
+        /// Sender entity identifier.
+        sender_id: u32,
+        /// Text message payload.
+        message: String,
+    },
+    /// Equipment slot item updated.
+    EquipmentChanged {
+        /// Entity ID whose equipment changed.
+        entity_id: u32,
+        /// Equipment slot opcode (0..8).
+        slot: u8,
+        /// Equipped item identifier, or 0 if unequipped.
+        item_id: u32,
+    },
+    /// Party membership or status updated.
+    PartyUpdated {
+        /// Unique party group identifier.
+        party_id: u64,
+        /// Leader account identifier.
+        leader_account_id: u64,
+        /// Current number of members in the party.
+        member_count: u8,
+    },
 }

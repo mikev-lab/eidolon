@@ -6,13 +6,17 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod ability;
+pub mod chat;
 pub mod cluster;
 pub mod companion;
 pub mod durable_journal;
+pub mod equipment;
 pub mod error;
 pub mod hibernation;
 pub mod instance;
 pub mod partition;
+pub mod party;
 pub mod reconstruction;
 pub mod replicated_journal;
 pub mod transaction;
@@ -20,6 +24,13 @@ pub mod wal;
 pub mod zone;
 
 // Re-export primary types for ergonomic crate consumption.
+pub use ability::{
+    get_ability_definition, AbilityDefinition, AbilityShape, CastInterruptedReason, CastState,
+    CooldownTracker,
+};
+pub use chat::{
+    is_within_proximity, ChatChannel, ChatMessage, ChatRateLimiter, DEFAULT_PROXIMITY_RADIUS_METERS,
+};
 pub use cluster::{
     ClusterTickMetrics, ClusterTopologyConfig, ClusterZoneNode, MultiServerClusterHarness,
     MAX_CLUSTER_NODES, MAX_IN_FLIGHT_MIGRATIONS,
@@ -28,6 +39,7 @@ pub use companion::{
     AssetManifestDigest, PatchNegotiationState, PatchNegotiator, ZoneAssetRequirement,
 };
 pub use durable_journal::{CommitDurability, DurableFileJournal, JOURNAL_MAGIC};
+pub use equipment::EquipmentContainer;
 pub use error::{InstanceId, WorldError, ZoneId};
 pub use hibernation::{
     compute_adler32, hydrate_player_into_zone, CharacterRecord, HibernationHeader, PityState,
@@ -40,6 +52,7 @@ pub use partition::{
     BoundaryLease, EntityPartitionState, ZonePartitionDetector, ZonePartitionManager,
     DEFAULT_LEASE_DURATION_TICKS, DEFAULT_PARTITION_TIMEOUT_TICKS,
 };
+pub use party::{Party, PartyManager, PartyMember, MAX_GROUP_MEMBERS};
 pub use reconstruction::{
     decode_position_payload, encode_position_payload, reconstruct_zone_from_wal, CheckpointEntity,
     ZoneCheckpoint,

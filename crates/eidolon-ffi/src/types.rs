@@ -65,3 +65,15 @@ pub const EIDOLON_EVENT_ENTITY_UPDATED: u32 = 5;
 pub const EIDOLON_EVENT_COMBAT_ACTION: u32 = 6;
 /// Event type constant: Loot acquired.
 pub const EIDOLON_EVENT_LOOT_ACQUIRED: u32 = 7;
+/// Event type constant: Ability cast started with cast bar duration.
+pub const EIDOLON_EVENT_CAST_STARTED: u32 = 8;
+/// Event type constant: Active cast interrupted (movement, damage).
+pub const EIDOLON_EVENT_CAST_INTERRUPTED: u32 = 9;
+/// Event type constant: Ability cast completed successfully.
+pub const EIDOLON_EVENT_CAST_COMPLETED: u32 = 10;
+/// Event type constant: Chat message received from proximity, party, or shout.
+pub const EIDOLON_EVENT_CHAT_MESSAGE: u32 = 11;
+/// Event type constant: Equipment slot item updated.
+pub const EIDOLON_EVENT_EQUIPMENT_CHANGED: u32 = 12;
+/// Event type constant: Party membership or vitals updated.
+pub const EIDOLON_EVENT_PARTY_UPDATED: u32 = 13;

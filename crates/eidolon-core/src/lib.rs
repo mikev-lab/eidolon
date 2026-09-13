@@ -8,7 +8,9 @@
 
 pub mod authority;
 pub mod fixed;
+pub mod geom;
 pub mod identity;
+pub mod item;
 pub mod kinematics;
 pub mod lock;
 pub mod quant;
@@ -16,8 +18,12 @@ pub mod trace;
 
 pub use authority::{AuthorityError, AuthorityFencer, AuthorityToken, AUTHORITY_TOKEN_LEN};
 pub use fixed::{Fixed64, Vec3Fix};
+pub use geom::SpatialGeometry;
 pub use identity::{
     AccountId, CharacterAuthorization, CharacterId, IdentityError, IdentityRegistry, SessionTicket,
+};
+pub use item::{
+    get_item_definition, EquipmentSlot, ItemDefinition, StatBlock, NUM_EQUIPMENT_SLOTS,
 };
 pub use kinematics::{
     extrapolate, reconcile_smooth, should_dispatch_update, DeadReckoningConfig, KinematicState,

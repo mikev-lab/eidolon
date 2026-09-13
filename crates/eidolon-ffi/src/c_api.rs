@@ -8,9 +8,11 @@ use eidolon_client::{ClientConfig, ClientEvent, EidolonClient};
 use eidolon_core::identity::{AccountId, SessionTicket};
 
 use crate::types::{
-    EidolonEvent, EidolonTransform, EIDOLON_EVENT_COMBAT_ACTION, EIDOLON_EVENT_CONNECTED,
-    EIDOLON_EVENT_DISCONNECTED, EIDOLON_EVENT_ENTITY_DESPAWNED, EIDOLON_EVENT_ENTITY_SPAWNED,
-    EIDOLON_EVENT_ENTITY_UPDATED, EIDOLON_EVENT_LOOT_ACQUIRED,
+    EidolonEvent, EidolonTransform, EIDOLON_EVENT_CAST_COMPLETED, EIDOLON_EVENT_CAST_INTERRUPTED,
+    EIDOLON_EVENT_CAST_STARTED, EIDOLON_EVENT_CHAT_MESSAGE, EIDOLON_EVENT_COMBAT_ACTION,
+    EIDOLON_EVENT_CONNECTED, EIDOLON_EVENT_DISCONNECTED, EIDOLON_EVENT_ENTITY_DESPAWNED,
+    EIDOLON_EVENT_ENTITY_SPAWNED, EIDOLON_EVENT_ENTITY_UPDATED, EIDOLON_EVENT_EQUIPMENT_CHANGED,
+    EIDOLON_EVENT_LOOT_ACQUIRED, EIDOLON_EVENT_PARTY_UPDATED,
 };
 
 /// Opaque handle representing an `EidolonClient` instance across the C ABI.
@@ -282,6 +284,89 @@ pub extern "C" fn eidolon_client_poll_events(
                         param1: 0,
                         param2: 0,
                     },
+                    ClientEvent::CastStarted {
+                        entity_id,
+                        ability_id,
+                        duration_ticks,
+                    } => EidolonEvent {
+                        event_type: EIDOLON_EVENT_CAST_STARTED,
+                        entity_id,
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                        yaw_degrees: 0.0,
+                        param1: ability_id as u64,
+                        param2: duration_ticks as u64,
+                    },
+                    ClientEvent::CastInterrupted {
+                        entity_id,
+                        ability_id,
+                        reason,
+                    } => EidolonEvent {
+                        event_type: EIDOLON_EVENT_CAST_INTERRUPTED,
+                        entity_id,
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                        yaw_degrees: 0.0,
+                        param1: ability_id as u64,
+                        param2: reason as u64,
+                    },
+                    ClientEvent::CastCompleted {
+                        entity_id,
+                        ability_id,
+                    } => EidolonEvent {
+                        event_type: EIDOLON_EVENT_CAST_COMPLETED,
+                        entity_id,
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                        yaw_degrees: 0.0,
+                        param1: ability_id as u64,
+                        param2: 0,
+                    },
+                    ClientEvent::ChatMessageReceived {
+                        channel,
+                        sender_id,
+                        message: _,
+                    } => EidolonEvent {
+                        event_type: EIDOLON_EVENT_CHAT_MESSAGE,
+                        entity_id: sender_id,
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                        yaw_degrees: 0.0,
+                        param1: channel as u64,
+                        param2: 0,
+                    },
+                    ClientEvent::EquipmentChanged {
+                        entity_id,
+                        slot,
+                        item_id,
+                    } => EidolonEvent {
+                        event_type: EIDOLON_EVENT_EQUIPMENT_CHANGED,
+                        entity_id,
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                        yaw_degrees: 0.0,
+                        param1: slot as u64,
+                        param2: item_id as u64,
+                    },
+                    ClientEvent::PartyUpdated {
+                        party_id,
+                        leader_account_id,
+                        member_count,
+                    } => EidolonEvent {
+                        event_type: EIDOLON_EVENT_PARTY_UPDATED,
+                        entity_id: 0,
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                        yaw_degrees: 0.0,
+                        param1: party_id,
+                        param2: (leader_account_id << 8) | (member_count as u64),
+                    },
                 };
 
                 // SAFETY: `cb` is a valid C function pointer provided by the caller; `user_data` is passed through untouched.
@@ -348,6 +433,151 @@ pub extern "C" fn eidolon_client_send_action(
         };
 
         match client.send_action(action_type, target_id, param) {
+            Ok(_) => EIDOLON_OK,
+            Err(_) => EIDOLON_ERR_NETWORK,
+        }
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
+}
+
+/// Dispatches an authoritative ability cast command.
+#[no_mangle]
+pub extern "C" fn eidolon_client_cast_ability(
+    handle: *mut EidolonClientHandle,
+    target_id: u32,
+    ability_id: u32,
+) -> i32 {
+    if handle.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` was verified non-null above.
+        let handle_ref = unsafe { &mut *handle };
+        let client = match handle_ref.client.as_mut() {
+            Some(c) => c,
+            None => return EIDOLON_ERR_NOT_CONNECTED,
+        };
+
+        match client.cast_ability(target_id, ability_id) {
+            Ok(_) => EIDOLON_OK,
+            Err(_) => EIDOLON_ERR_NETWORK,
+        }
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
+}
+
+/// Dispatches an item equip command.
+#[no_mangle]
+pub extern "C" fn eidolon_client_equip_item(
+    handle: *mut EidolonClientHandle,
+    inventory_slot: u8,
+    equip_slot: u8,
+) -> i32 {
+    if handle.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` was verified non-null above.
+        let handle_ref = unsafe { &mut *handle };
+        let client = match handle_ref.client.as_mut() {
+            Some(c) => c,
+            None => return EIDOLON_ERR_NOT_CONNECTED,
+        };
+
+        match client.equip_item(inventory_slot, equip_slot) {
+            Ok(_) => EIDOLON_OK,
+            Err(_) => EIDOLON_ERR_NETWORK,
+        }
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
+}
+
+/// Dispatches an item unequip command.
+#[no_mangle]
+pub extern "C" fn eidolon_client_unequip_item(
+    handle: *mut EidolonClientHandle,
+    equip_slot: u8,
+) -> i32 {
+    if handle.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` was verified non-null above.
+        let handle_ref = unsafe { &mut *handle };
+        let client = match handle_ref.client.as_mut() {
+            Some(c) => c,
+            None => return EIDOLON_ERR_NOT_CONNECTED,
+        };
+
+        match client.unequip_item(equip_slot) {
+            Ok(_) => EIDOLON_OK,
+            Err(_) => EIDOLON_ERR_NETWORK,
+        }
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
+}
+
+/// Dispatches a multi-channel chat message.
+#[no_mangle]
+pub extern "C" fn eidolon_client_send_chat(
+    handle: *mut EidolonClientHandle,
+    channel: u8,
+    target_id: u32,
+    text: *const c_char,
+) -> i32 {
+    if handle.is_null() || text.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` and `text` are verified non-null above.
+        let text_str = match unsafe { CStr::from_ptr(text) }.to_str() {
+            Ok(s) => s,
+            Err(_) => return EIDOLON_ERR_INVALID_HOST,
+        };
+
+        let handle_ref = unsafe { &mut *handle };
+        let client = match handle_ref.client.as_mut() {
+            Some(c) => c,
+            None => return EIDOLON_ERR_NOT_CONNECTED,
+        };
+
+        match client.send_chat(channel, target_id, text_str) {
+            Ok(_) => EIDOLON_OK,
+            Err(_) => EIDOLON_ERR_NETWORK,
+        }
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
+}
+
+/// Dispatches a party command (1 = invite, 2 = accept, 3 = leave).
+#[no_mangle]
+pub extern "C" fn eidolon_client_party_command(
+    handle: *mut EidolonClientHandle,
+    cmd: u8,
+    target_account: u64,
+) -> i32 {
+    if handle.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` was verified non-null above.
+        let handle_ref = unsafe { &mut *handle };
+        let client = match handle_ref.client.as_mut() {
+            Some(c) => c,
+            None => return EIDOLON_ERR_NOT_CONNECTED,
+        };
+
+        match client.party_command(cmd, target_account) {
             Ok(_) => EIDOLON_OK,
             Err(_) => EIDOLON_ERR_NETWORK,
         }

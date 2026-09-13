@@ -95,6 +95,41 @@ namespace Eidolon
         );
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int eidolon_client_cast_ability(
+            IntPtr handle,
+            uint targetId,
+            uint abilityId
+        );
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int eidolon_client_equip_item(
+            IntPtr handle,
+            byte inventorySlot,
+            byte equipSlot
+        );
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int eidolon_client_unequip_item(
+            IntPtr handle,
+            byte equipSlot
+        );
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        private static extern int eidolon_client_send_chat(
+            IntPtr handle,
+            byte channel,
+            uint targetId,
+            string text
+        );
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int eidolon_client_party_command(
+            IntPtr handle,
+            byte cmd,
+            ulong targetAccount
+        );
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         private static extern int eidolon_client_extrapolate_entity(
             IntPtr handle,
             uint entityId,
@@ -127,6 +162,12 @@ namespace Eidolon
         public event Action<uint, float, float, float, float, byte> OnEntityUpdated;
         public event Action<uint, uint, byte, uint> OnCombatAction;
         public event Action<uint, uint, uint> OnLootAcquired;
+        public event Action<uint, uint, uint> OnCastStarted;
+        public event Action<uint, uint, byte> OnCastInterrupted;
+        public event Action<uint, uint> OnCastCompleted;
+        public event Action<byte, uint> OnChatMessage;
+        public event Action<uint, byte, uint> OnEquipmentChanged;
+        public event Action<ulong, ulong, byte> OnPartyUpdated;
 
         public bool IsConnected => _handle != IntPtr.Zero && eidolon_client_is_connected(_handle) == 1;
 
@@ -171,6 +212,36 @@ namespace Eidolon
         {
             ThrowIfDisposed();
             return eidolon_client_send_action(_handle, actionType, targetId, param) == 0;
+        }
+
+        public bool CastAbility(uint targetId, uint abilityId)
+        {
+            ThrowIfDisposed();
+            return eidolon_client_cast_ability(_handle, targetId, abilityId) == 0;
+        }
+
+        public bool EquipItem(byte inventorySlot, byte equipSlot)
+        {
+            ThrowIfDisposed();
+            return eidolon_client_equip_item(_handle, inventorySlot, equipSlot) == 0;
+        }
+
+        public bool UnequipItem(byte equipSlot)
+        {
+            ThrowIfDisposed();
+            return eidolon_client_unequip_item(_handle, equipSlot) == 0;
+        }
+
+        public bool SendChat(byte channel, uint targetId, string text)
+        {
+            ThrowIfDisposed();
+            return eidolon_client_send_chat(_handle, channel, targetId, text) == 0;
+        }
+
+        public bool PartyCommand(byte cmd, ulong targetAccount)
+        {
+            ThrowIfDisposed();
+            return eidolon_client_party_command(_handle, cmd, targetAccount) == 0;
         }
 
         public bool TryExtrapolateEntity(uint entityId, float deltaTime, out EidolonTransform transform)
@@ -224,6 +295,26 @@ namespace Eidolon
                     uint itemId = (uint)evt.Param1;
                     uint amount = (uint)evt.Param2;
                     OnLootAcquired?.Invoke(evt.EntityId, itemId, amount);
+                    break;
+                case 8: // CastStarted
+                    OnCastStarted?.Invoke(evt.EntityId, (uint)evt.Param1, (uint)evt.Param2);
+                    break;
+                case 9: // CastInterrupted
+                    OnCastInterrupted?.Invoke(evt.EntityId, (uint)evt.Param1, (byte)evt.Param2);
+                    break;
+                case 10: // CastCompleted
+                    OnCastCompleted?.Invoke(evt.EntityId, (uint)evt.Param1);
+                    break;
+                case 11: // ChatMessage
+                    OnChatMessage?.Invoke((byte)evt.Param1, (uint)evt.Param2);
+                    break;
+                case 12: // EquipmentChanged
+                    OnEquipmentChanged?.Invoke(evt.EntityId, (byte)evt.Param1, (uint)evt.Param2);
+                    break;
+                case 13: // PartyUpdated
+                    ulong leaderId = evt.Param2 >> 8;
+                    byte memberCount = (byte)(evt.Param2 & 0xFF);
+                    OnPartyUpdated?.Invoke(evt.Param1, leaderId, memberCount);
                     break;
             }
         }

@@ -8,6 +8,8 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::path::{Path, PathBuf};
 
 use eidolon_core::fixed::{Fixed64, Vec3Fix};
+use eidolon_core::geom::SpatialGeometry;
+use eidolon_core::item::EquipmentSlot;
 use eidolon_core::kinematics::{extrapolate, KinematicState};
 use eidolon_core::quant::{QuantizedCellCoord, QuantizedYaw};
 use eidolon_net::auth::{
@@ -18,7 +20,11 @@ use eidolon_net::error::NetError;
 use eidolon_net::packet::PacketHeader;
 use eidolon_net::protocol::{ChannelType, PacketType, HEADER_SIZE, MAX_PACKET_SIZE};
 use eidolon_spatial::SpatialHashGrid;
+use eidolon_world::ability::{get_ability_definition, AbilityShape, CastState, CooldownTracker};
+use eidolon_world::chat::{ChatChannel, ChatRateLimiter};
 use eidolon_world::durable_journal::DurableFileJournal;
+use eidolon_world::equipment::EquipmentContainer;
+use eidolon_world::party::{PartyManager, PartyMember};
 use eidolon_world::transaction::TransactionManager;
 use eidolon_world::wal::WalRecord;
 use eidolon_world::WorldError;
@@ -89,6 +95,16 @@ pub struct ServerEntity {
     pub health: u32,
     /// Maximum health capacity.
     pub max_health: u32,
+    /// Current mana resource points.
+    pub mana: u32,
+    /// Maximum mana capacity.
+    pub max_mana: u32,
+    /// Active ability cast progress state.
+    pub cast_state: CastState,
+    /// Character ability cooldown tracker.
+    pub cooldowns: CooldownTracker,
+    /// Equipped character gear across all 9 slots.
+    pub equipment: EquipmentContainer,
     /// Optional remote socket address (populated for connected human players).
     pub peer_addr: Option<SocketAddr>,
     /// Associated player account ID.
@@ -148,6 +164,7 @@ impl EidolonAppBuilder {
         let bind_addr = self
             .bind_addr
             .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 7777)));
+
         let socket = UdpSocket::bind(bind_addr)?;
         socket.set_nonblocking(true)?;
 
@@ -167,6 +184,8 @@ impl EidolonAppBuilder {
             server_secret: self.server_secret,
             server_nonce: [0x55; NONCE_LEN],
             packet_buf: [0u8; MAX_PACKET_SIZE],
+            chat_limiter: ChatRateLimiter::new(10, 20),
+            party_manager: PartyManager::new(),
         })
     }
 }
@@ -188,6 +207,8 @@ pub struct EidolonApp {
     server_secret: [u8; 32],
     server_nonce: [u8; NONCE_LEN],
     packet_buf: [u8; MAX_PACKET_SIZE],
+    chat_limiter: ChatRateLimiter,
+    party_manager: PartyManager,
 }
 
 impl EidolonApp {
@@ -204,6 +225,16 @@ impl EidolonApp {
     /// Returns a mutable reference to the transaction manager.
     pub fn tx_manager_mut(&mut self) -> &mut TransactionManager {
         &mut self.tx_manager
+    }
+
+    /// Returns a reference to the party manager.
+    pub fn party_manager(&self) -> &PartyManager {
+        &self.party_manager
+    }
+
+    /// Returns a mutable reference to the party manager.
+    pub fn party_manager_mut(&mut self) -> &mut PartyManager {
+        &mut self.party_manager
     }
 
     /// Returns the local socket address this server is listening on.
@@ -235,6 +266,11 @@ impl EidolonApp {
             flags: 0,
             health: 100,
             max_health: 100,
+            mana: 100,
+            max_mana: 100,
+            cast_state: CastState::Idle,
+            cooldowns: CooldownTracker::new(),
+            equipment: EquipmentContainer::new(),
             peer_addr: None,
             account_id: None,
             session_id: None,
@@ -272,6 +308,11 @@ impl EidolonApp {
             flags: 0,
             health: 100,
             max_health: 100,
+            mana: 100,
+            max_mana: 100,
+            cast_state: CastState::Idle,
+            cooldowns: CooldownTracker::new(),
+            equipment: EquipmentContainer::new(),
             peer_addr: Some(peer_addr),
             account_id: Some(account_id),
             session_id: Some(session_id),
@@ -298,14 +339,40 @@ impl EidolonApp {
         self.entities.get_mut(&entity_id)
     }
 
-    /// Applies damage to an entity, reducing health and returning `true` if entity was killed.
-    pub fn damage_entity(&mut self, _source_id: u32, target_id: u32, damage: u32) -> bool {
-        if let Some(target) = self.entities.get_mut(&target_id) {
-            target.health = target.health.saturating_sub(damage);
+    /// Applies damage to an entity, factoring in attacker attack power and target armor.
+    ///
+    /// Interrupts active casts on damage and returns `true` if target entity was killed.
+    pub fn damage_entity(&mut self, source_id: u32, target_id: u32, raw_damage: u32) -> bool {
+        let attack_power_bonus = self
+            .entities
+            .get(&source_id)
+            .map(|s| s.equipment.compute_stats().attack_power)
+            .unwrap_or(0);
+        let total_damage = raw_damage.saturating_add(attack_power_bonus);
+
+        let mut cast_interrupted = None;
+
+        let killed = if let Some(target) = self.entities.get_mut(&target_id) {
+            let armor = target.equipment.compute_stats().armor;
+            let effective_damage = total_damage.saturating_sub(armor).max(1);
+
+            // Interrupt any active non-unbreakable cast on damage
+            if let CastState::Casting { ability_id, .. } = target.cast_state {
+                target.cast_state = CastState::Idle;
+                cast_interrupted = Some((target_id, ability_id));
+            }
+
+            target.health = target.health.saturating_sub(effective_damage);
             target.health == 0
         } else {
             false
+        };
+
+        if let Some((interrupted_target, ability_id)) = cast_interrupted {
+            self.broadcast_cast_interrupted(interrupted_target, ability_id, 2); // 2 = Damage
         }
+
+        killed
     }
 
     /// Executes an atomic transaction, persisting to durable WAL via physical `fdatasync`.
@@ -334,7 +401,7 @@ impl EidolonApp {
     /// Executes one fixed-step 20 Hz authoritative simulation tick.
     ///
     /// Drains ingress packets, updates kinematics, resolves spatial AoI,
-    /// quantizes transforms into 22-byte diffs, and pushes UDP egress.
+    /// advances cast progress state machines, quantizes transforms, and pushes UDP egress.
     pub fn tick(&mut self) -> Result<(), AppError> {
         self.current_tick += 1;
         let tick_interval_secs = Fixed64::from_f64(0.050); // 50ms = 20 Hz
@@ -363,10 +430,195 @@ impl EidolonApp {
                 .update_position(entity.id, entity.position);
         }
 
-        // 4. Broadcast AoI State Updates to Connected Player Peers
+        // 4. Progress Cast Bars and Check Interrupts
+        let current_tick = self.current_tick;
+        let mut interrupted_casts = Vec::new();
+        let mut completed_casts = Vec::new();
+
+        for entity in self.entities.values_mut() {
+            if let CastState::Casting {
+                ability_id,
+                target_id,
+                start_tick,
+                duration_ticks,
+                start_pos,
+            } = entity.cast_state
+            {
+                // Check movement break threshold (> 0.5m distance from cast origin)
+                let diff = entity.position - start_pos;
+                let moved_sq = (diff.x * diff.x) + (diff.y * diff.y) + (diff.z * diff.z);
+                if moved_sq > Fixed64::from_f64(0.25) {
+                    entity.cast_state = CastState::Idle;
+                    interrupted_casts.push((entity.id, ability_id, 1u8)); // 1 = Movement
+                    continue;
+                }
+
+                // Check cast bar completion
+                if current_tick >= start_tick + duration_ticks as u64 {
+                    entity.cast_state = CastState::Idle;
+                    completed_casts.push((entity.id, ability_id, target_id));
+                }
+            }
+        }
+
+        for (caster_id, ability_id, reason) in interrupted_casts {
+            self.broadcast_cast_interrupted(caster_id, ability_id, reason);
+        }
+
+        for (caster_id, ability_id, target_id) in completed_casts {
+            self.resolve_ability_completion(caster_id, ability_id, target_id);
+        }
+
+        // 5. Resource regeneration tick (every 20 ticks = 1.0s at 20 Hz)
+        if self.current_tick.is_multiple_of(20) {
+            for entity in self.entities.values_mut() {
+                if entity.mana < entity.max_mana {
+                    entity.mana = (entity.mana + 5).min(entity.max_mana);
+                }
+            }
+        }
+
+        // 6. Broadcast AoI State Updates to Connected Player Peers
         self.broadcast_aoi_updates();
 
         Ok(())
+    }
+
+    /// Resolves an ability upon cast bar completion or instant trigger.
+    fn resolve_ability_completion(&mut self, caster_id: u32, ability_id: u32, target_id: u32) {
+        let (caster_pos, caster_yaw) = match self.entities.get(&caster_id) {
+            Some(c) => (c.position, c.yaw),
+            None => return,
+        };
+
+        let def = match get_ability_definition(ability_id) {
+            Some(d) => d,
+            None => return,
+        };
+
+        // Emit CastCompleted event
+        self.broadcast_cast_completed(caster_id, ability_id);
+
+        match def.shape {
+            AbilityShape::SingleTarget { max_range } => {
+                if let Some(target) = self.entities.get(&target_id) {
+                    let diff = target.position - caster_pos;
+                    if diff.magnitude_squared() <= max_range * max_range {
+                        if def.base_damage > 0 {
+                            let killed = self.damage_entity(caster_id, target_id, def.base_damage);
+                            self.broadcast_combat_action(caster_id, target_id, 2, def.base_damage); // 2 = Magic
+                            if killed {
+                                self.broadcast_combat_action(caster_id, target_id, 4, 0); // 4 = Death
+                                if let Some(peer) =
+                                    self.entities.get(&caster_id).and_then(|c| c.peer_addr)
+                                {
+                                    self.send_loot_event(peer, target_id, 1001, 50);
+                                }
+                            }
+                        } else if def.base_heal > 0 {
+                            if let Some(target_ent) = self.entities.get_mut(&target_id) {
+                                target_ent.health =
+                                    (target_ent.health + def.base_heal).min(target_ent.max_health);
+                            }
+                            self.broadcast_combat_action(caster_id, target_id, 3, def.base_heal);
+                            // 3 = Heal
+                        }
+                    }
+                }
+            }
+            AbilityShape::ForwardCone {
+                half_angle_deg,
+                max_distance,
+                max_height,
+            } => {
+                let mut hits = Vec::new();
+                for (id, entity) in &self.entities {
+                    if *id != caster_id
+                        && SpatialGeometry::test_cone(
+                            caster_pos,
+                            caster_yaw,
+                            half_angle_deg,
+                            max_distance,
+                            max_height,
+                            entity.position,
+                        )
+                    {
+                        hits.push(*id);
+                    }
+                }
+
+                for tid in hits {
+                    if def.base_damage > 0 {
+                        let killed = self.damage_entity(caster_id, tid, def.base_damage);
+                        self.broadcast_combat_action(caster_id, tid, 2, def.base_damage);
+                        if killed {
+                            self.broadcast_combat_action(caster_id, tid, 4, 0);
+                            if let Some(peer) =
+                                self.entities.get(&caster_id).and_then(|c| c.peer_addr)
+                            {
+                                self.send_loot_event(peer, tid, 1001, 50);
+                            }
+                        }
+                    }
+                }
+            }
+            AbilityShape::RadiusSphere { radius } => {
+                let mut hits = Vec::new();
+                for (id, entity) in &self.entities {
+                    if *id != caster_id
+                        && SpatialGeometry::test_sphere(caster_pos, radius, entity.position)
+                    {
+                        hits.push(*id);
+                    }
+                }
+
+                for tid in hits {
+                    if def.base_damage > 0 {
+                        let killed = self.damage_entity(caster_id, tid, def.base_damage);
+                        self.broadcast_combat_action(caster_id, tid, 2, def.base_damage);
+                        if killed {
+                            self.broadcast_combat_action(caster_id, tid, 4, 0);
+                            if let Some(peer) =
+                                self.entities.get(&caster_id).and_then(|c| c.peer_addr)
+                            {
+                                self.send_loot_event(peer, tid, 1001, 50);
+                            }
+                        }
+                    }
+                }
+            }
+            AbilityShape::ForwardBox {
+                length,
+                width,
+                height,
+            } => {
+                let mut hits = Vec::new();
+                for (id, entity) in &self.entities {
+                    if *id != caster_id
+                        && SpatialGeometry::test_box(
+                            caster_pos,
+                            caster_yaw,
+                            length,
+                            width,
+                            height,
+                            entity.position,
+                        )
+                    {
+                        hits.push(*id);
+                    }
+                }
+
+                for tid in hits {
+                    if def.base_damage > 0 {
+                        let killed = self.damage_entity(caster_id, tid, def.base_damage);
+                        self.broadcast_combat_action(caster_id, tid, 2, def.base_damage);
+                        if killed {
+                            self.broadcast_combat_action(caster_id, tid, 4, 0);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn drain_network_packets(&mut self) {
@@ -420,7 +672,6 @@ impl EidolonApp {
                                 }
                             } else if payload.len() == FINALIZE_REQ_LEN {
                                 if let Ok(fin) = ConnectFinalizeRequest::read_from(payload) {
-                                    // Accept connection and spawn player session
                                     let session_id = fin.account_id ^ 0xA5A5;
                                     let fin_resp = ConnectFinalizeResponse {
                                         session_id,
@@ -444,7 +695,6 @@ impl EidolonApp {
                                             let _ =
                                                 self.socket.send_to(&wire[..hlen + fin_len], peer);
 
-                                            // Auto-spawn player entity if not already present
                                             let player_eid = (fin.account_id & 0x0FFF) as u32;
                                             if !self.entities.contains_key(&player_eid) {
                                                 let _ = self.spawn_player(
@@ -460,23 +710,329 @@ impl EidolonApp {
                                         }
                                     }
                                 }
-                            } else if payload.len() >= 9 {
-                                // Reliable action command: action_type (1B) + target_id (4B) + param (4B)
+                            } else if !payload.is_empty() {
                                 let action_type = payload[0];
-                                let target_id = u32::from_be_bytes([
-                                    payload[1], payload[2], payload[3], payload[4],
-                                ]);
-                                let param = u32::from_be_bytes([
-                                    payload[5], payload[6], payload[7], payload[8],
-                                ]);
+                                match action_type {
+                                    // 1: Melee attack [1, target_id (4B), param (4B)]
+                                    1 if payload.len() >= 9 => {
+                                        let target_id = u32::from_be_bytes([
+                                            payload[1], payload[2], payload[3], payload[4],
+                                        ]);
+                                        let param = u32::from_be_bytes([
+                                            payload[5], payload[6], payload[7], payload[8],
+                                        ]);
 
-                                // Handle combat action (1 = attack)
-                                if action_type == 1 {
-                                    let killed = self.damage_entity(0, target_id, param);
-                                    if killed {
-                                        // Broadcast loot drop notification to peer
-                                        self.send_loot_event(peer, target_id, 1001, 50);
+                                        let source_id = self
+                                            .entities
+                                            .values()
+                                            .find(|e| e.peer_addr == Some(peer))
+                                            .map(|e| e.id)
+                                            .unwrap_or(0);
+
+                                        let killed =
+                                            self.damage_entity(source_id, target_id, param);
+                                        self.broadcast_combat_action(
+                                            source_id, target_id, 1, param,
+                                        );
+                                        if killed {
+                                            self.broadcast_combat_action(
+                                                source_id, target_id, 4, 0,
+                                            );
+                                            self.send_loot_event(peer, target_id, 1001, 50);
+                                        }
                                     }
+
+                                    // 2: Cast ability [2, target_id (4B), ability_id (4B)]
+                                    2 if payload.len() >= 9 => {
+                                        let target_id = u32::from_be_bytes([
+                                            payload[1], payload[2], payload[3], payload[4],
+                                        ]);
+                                        let ability_id = u32::from_be_bytes([
+                                            payload[5], payload[6], payload[7], payload[8],
+                                        ]);
+
+                                        if let Some(caster) = self
+                                            .entities
+                                            .values_mut()
+                                            .find(|e| e.peer_addr == Some(peer))
+                                        {
+                                            let caster_id = caster.id;
+                                            let current_tick = self.current_tick;
+
+                                            if let Some(def) = get_ability_definition(ability_id) {
+                                                if caster.mana >= def.resource_cost
+                                                    && caster
+                                                        .cooldowns
+                                                        .is_ready(ability_id, current_tick)
+                                                {
+                                                    caster.mana = caster
+                                                        .mana
+                                                        .saturating_sub(def.resource_cost);
+                                                    caster.cooldowns.trigger(
+                                                        ability_id,
+                                                        current_tick,
+                                                        def.cooldown_ticks,
+                                                    );
+
+                                                    if def.cast_duration_ticks == 0 {
+                                                        // Instant cast
+                                                        self.resolve_ability_completion(
+                                                            caster_id, ability_id, target_id,
+                                                        );
+                                                    } else {
+                                                        caster.cast_state = CastState::start_cast(
+                                                            ability_id,
+                                                            target_id,
+                                                            current_tick,
+                                                            def.cast_duration_ticks,
+                                                            caster.position,
+                                                        );
+                                                        self.broadcast_cast_started(
+                                                            caster_id,
+                                                            ability_id,
+                                                            def.cast_duration_ticks,
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // 3: Equip item [3, inventory_slot (4B), equip_slot (4B)]
+                                    3 if payload.len() >= 9 => {
+                                        let inv_slot = u32::from_be_bytes([
+                                            payload[1], payload[2], payload[3], payload[4],
+                                        ]);
+                                        let eq_slot_raw = u32::from_be_bytes([
+                                            payload[5], payload[6], payload[7], payload[8],
+                                        ])
+                                            as u8;
+
+                                        if let Some(slot) = EquipmentSlot::from_u8(eq_slot_raw) {
+                                            if let Some(player) = self
+                                                .entities
+                                                .values_mut()
+                                                .find(|e| e.peer_addr == Some(peer))
+                                            {
+                                                let player_id = player.id;
+                                                let account_id = player.account_id;
+
+                                                let inv_idx = inv_slot as usize;
+                                                let equipped_item = if let Some(aid) = account_id {
+                                                    if let Some(account) =
+                                                        self.tx_manager.get_account_mut(aid)
+                                                    {
+                                                        let _ = account.equip_item(inv_idx, slot);
+                                                        account
+                                                            .equipment
+                                                            .get(slot)
+                                                            .unwrap_or(inv_slot.max(1))
+                                                    } else {
+                                                        inv_slot.max(1)
+                                                    }
+                                                } else {
+                                                    inv_slot.max(1)
+                                                };
+
+                                                let _ = player.equipment.equip(slot, equipped_item);
+                                                self.broadcast_equipment_changed(
+                                                    player_id,
+                                                    eq_slot_raw,
+                                                    equipped_item,
+                                                );
+                                            }
+                                        }
+                                    }
+
+                                    // 4: Unequip item [4, equip_slot (4B), 0 (4B)]
+                                    4 if payload.len() >= 9 => {
+                                        let eq_slot_raw = u32::from_be_bytes([
+                                            payload[1], payload[2], payload[3], payload[4],
+                                        ])
+                                            as u8;
+
+                                        if let Some(slot) = EquipmentSlot::from_u8(eq_slot_raw) {
+                                            if let Some(player) = self
+                                                .entities
+                                                .values_mut()
+                                                .find(|e| e.peer_addr == Some(peer))
+                                            {
+                                                let player_id = player.id;
+                                                let account_id = player.account_id;
+
+                                                if let Some(aid) = account_id {
+                                                    if let Some(account) =
+                                                        self.tx_manager.get_account_mut(aid)
+                                                    {
+                                                        let _ = account.unequip_item(slot);
+                                                    }
+                                                }
+
+                                                let _ = player.equipment.unequip(slot);
+                                                self.broadcast_equipment_changed(
+                                                    player_id,
+                                                    eq_slot_raw,
+                                                    0,
+                                                );
+                                            }
+                                        }
+                                    }
+
+                                    // 5: Send chat [5, channel (1B), target_id (4B), text_len (2B), text...]
+                                    5 if payload.len() >= 8 => {
+                                        let channel_raw = payload[1];
+                                        let target_id = u32::from_be_bytes([
+                                            payload[2], payload[3], payload[4], payload[5],
+                                        ]);
+                                        let text_len =
+                                            u16::from_be_bytes([payload[6], payload[7]]) as usize;
+
+                                        if payload.len() >= 8 + text_len {
+                                            let text_bytes = &payload[8..8 + text_len];
+
+                                            if let Some(sender) = self
+                                                .entities
+                                                .values()
+                                                .find(|e| e.peer_addr == Some(peer))
+                                            {
+                                                let sender_id = sender.id;
+                                                let sender_pos = sender.position;
+                                                let sender_account =
+                                                    sender.account_id.unwrap_or(sender_id as u64);
+
+                                                if self
+                                                    .chat_limiter
+                                                    .check_and_consume(
+                                                        sender_account,
+                                                        self.current_tick,
+                                                    )
+                                                    .is_ok()
+                                                {
+                                                    self.route_chat_message(
+                                                        channel_raw,
+                                                        sender_id,
+                                                        sender_pos,
+                                                        sender_account,
+                                                        target_id,
+                                                        text_bytes,
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // 6: Party command [6, cmd (1B), target_account (8B)]
+                                    6 if payload.len() >= 10 => {
+                                        let cmd = payload[1];
+                                        let target_account = u64::from_be_bytes([
+                                            payload[2], payload[3], payload[4], payload[5],
+                                            payload[6], payload[7], payload[8], payload[9],
+                                        ]);
+
+                                        if let Some(player) = self
+                                            .entities
+                                            .values()
+                                            .find(|e| e.peer_addr == Some(peer))
+                                        {
+                                            let caller_account =
+                                                player.account_id.unwrap_or(player.id as u64);
+                                            let player_id = player.id;
+                                            let health = player.health;
+                                            let max_health = player.max_health;
+                                            let mana = player.mana;
+                                            let max_mana = player.max_mana;
+                                            let position = player.position;
+
+                                            match cmd {
+                                                // 1 = Invite
+                                                1 => {
+                                                    let caller_member = PartyMember {
+                                                        account_id: caller_account,
+                                                        entity_id: player_id,
+                                                        name: format!("Player{player_id}"),
+                                                        health,
+                                                        max_health,
+                                                        mana,
+                                                        max_mana,
+                                                        position,
+                                                    };
+                                                    let party_id = match self
+                                                        .party_manager
+                                                        .get_party_by_account(caller_account)
+                                                    {
+                                                        Some(p) => p.party_id,
+                                                        None => self
+                                                            .party_manager
+                                                            .create_party(caller_member)
+                                                            .unwrap_or(0),
+                                                    };
+
+                                                    if party_id > 0 {
+                                                        let _ = self.party_manager.invite_player(
+                                                            party_id,
+                                                            caller_account,
+                                                            target_account,
+                                                        );
+                                                        self.send_party_updated_to_peer(
+                                                            peer,
+                                                            party_id,
+                                                            caller_account,
+                                                            1,
+                                                        );
+                                                    }
+                                                }
+                                                // 2 = Accept
+                                                2 => {
+                                                    let member = PartyMember {
+                                                        account_id: caller_account,
+                                                        entity_id: player_id,
+                                                        name: format!("Player{player_id}"),
+                                                        health,
+                                                        max_health,
+                                                        mana,
+                                                        max_mana,
+                                                        position,
+                                                    };
+                                                    if let Ok(party_id) = self
+                                                        .party_manager
+                                                        .accept_invite(caller_account, member)
+                                                    {
+                                                        if let Some(party) =
+                                                            self.party_manager.get_party(party_id)
+                                                        {
+                                                            let leader = party.leader_account_id;
+                                                            let count = party.members.len() as u8;
+                                                            self.broadcast_party_updated(
+                                                                party_id, leader, count,
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                                // 3 = Leave
+                                                3 => {
+                                                    if let Ok(Some(party_id)) = self
+                                                        .party_manager
+                                                        .leave_party(caller_account)
+                                                    {
+                                                        if let Some(party) =
+                                                            self.party_manager.get_party(party_id)
+                                                        {
+                                                            let leader = party.leader_account_id;
+                                                            let count = party.members.len() as u8;
+                                                            self.broadcast_party_updated(
+                                                                party_id, leader, count,
+                                                            );
+                                                        }
+                                                        self.send_party_updated_to_peer(
+                                                            peer, 0, 0, 0,
+                                                        );
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
@@ -519,8 +1075,78 @@ impl EidolonApp {
         }
     }
 
+    fn route_chat_message(
+        &self,
+        channel_raw: u8,
+        sender_id: u32,
+        sender_pos: Vec3Fix,
+        sender_account: u64,
+        target_id: u32,
+        text_bytes: &[u8],
+    ) {
+        let channel = match ChatChannel::from_u8(channel_raw) {
+            Some(c) => c,
+            None => return,
+        };
+
+        // Format ChatReceived packet: [6, channel (1B), sender_id (4B), text_len (2B), text...]
+        let text_len = text_bytes.len().min(u16::MAX as usize) as u16;
+        let mut msg_packet = Vec::with_capacity(8 + text_bytes.len());
+        msg_packet.push(6);
+        msg_packet.push(channel_raw);
+        msg_packet.extend_from_slice(&sender_id.to_be_bytes());
+        msg_packet.extend_from_slice(&text_len.to_be_bytes());
+        msg_packet.extend_from_slice(&text_bytes[..text_len as usize]);
+
+        match channel {
+            ChatChannel::SpatialProximity => {
+                // Broadcast to players within 25 meters (25^2 = 625)
+                let mut query_buf = [0u32; 128];
+                let res = self.spatial_grid.query_radius_squared(
+                    sender_pos,
+                    Fixed64::from_i32(625),
+                    &mut query_buf,
+                );
+
+                for &eid in &query_buf[..res.written] {
+                    if let Some(peer) = self.entities.get(&eid).and_then(|e| e.peer_addr) {
+                        self.send_reliable_event_to_peer(peer, &msg_packet);
+                    }
+                }
+            }
+            ChatChannel::Party => {
+                if let Some(party) = self.party_manager.get_party_by_account(sender_account) {
+                    for member in &party.members {
+                        if let Some(peer) = self
+                            .entities
+                            .values()
+                            .find(|e| e.account_id == Some(member.account_id))
+                            .and_then(|e| e.peer_addr)
+                        {
+                            self.send_reliable_event_to_peer(peer, &msg_packet);
+                        }
+                    }
+                }
+            }
+            ChatChannel::Whisper => {
+                if let Some(target_peer) = self.entities.get(&target_id).and_then(|e| e.peer_addr) {
+                    self.send_reliable_event_to_peer(target_peer, &msg_packet);
+                }
+                if let Some(sender_peer) = self.entities.get(&sender_id).and_then(|e| e.peer_addr) {
+                    self.send_reliable_event_to_peer(sender_peer, &msg_packet);
+                }
+            }
+            ChatChannel::GlobalShout => {
+                for entity in self.entities.values() {
+                    if let Some(peer) = entity.peer_addr {
+                        self.send_reliable_event_to_peer(peer, &msg_packet);
+                    }
+                }
+            }
+        }
+    }
+
     fn broadcast_aoi_updates(&mut self) {
-        // Collect observer players with peer addresses
         let observers: Vec<(u32, SocketAddr, Vec3Fix)> = self
             .entities
             .values()
@@ -529,7 +1155,6 @@ impl EidolonApp {
 
         let mut query_buf = [0u32; 128];
         for (_player_id, peer_addr, pos) in observers {
-            // Query nearby entities within 50m radius (50^2 = 2500 m^2)
             let query_res = self.spatial_grid.query_radius_squared(
                 pos,
                 Fixed64::from_i32(2500),
@@ -592,7 +1217,7 @@ impl EidolonApp {
         }
     }
 
-    fn send_loot_event(&self, peer: SocketAddr, entity_id: u32, item_id: u32, amount: u32) {
+    fn send_reliable_event_to_peer(&self, peer: SocketAddr, payload: &[u8]) {
         let header = PacketHeader::new(
             ChannelType::ReliableOrdered,
             PacketType::ReliableMessage,
@@ -600,19 +1225,121 @@ impl EidolonApp {
             0,
             0,
         );
-        let mut wire = [0u8; 64];
+        let mut wire = [0u8; MAX_PACKET_SIZE];
         if let Ok(hlen) = header.write_to(&mut wire) {
-            let mut idx = hlen;
-            wire[idx] = 2; // LootAcquired event type
-            idx += 1;
-            wire[idx..idx + 4].copy_from_slice(&entity_id.to_be_bytes());
-            idx += 4;
-            wire[idx..idx + 4].copy_from_slice(&item_id.to_be_bytes());
-            idx += 4;
-            wire[idx..idx + 4].copy_from_slice(&amount.to_be_bytes());
-            idx += 4;
-
-            let _ = self.socket.send_to(&wire[..idx], peer);
+            if hlen + payload.len() <= MAX_PACKET_SIZE {
+                wire[hlen..hlen + payload.len()].copy_from_slice(payload);
+                let _ = self.socket.send_to(&wire[..hlen + payload.len()], peer);
+            }
         }
+    }
+
+    fn broadcast_cast_started(&self, caster_id: u32, ability_id: u32, duration_ticks: u32) {
+        let mut payload = [0u8; 13];
+        payload[0] = 3; // CastStarted
+        payload[1..5].copy_from_slice(&caster_id.to_be_bytes());
+        payload[5..9].copy_from_slice(&ability_id.to_be_bytes());
+        payload[9..13].copy_from_slice(&duration_ticks.to_be_bytes());
+
+        for entity in self.entities.values() {
+            if let Some(peer) = entity.peer_addr {
+                self.send_reliable_event_to_peer(peer, &payload);
+            }
+        }
+    }
+
+    fn broadcast_cast_interrupted(&self, caster_id: u32, ability_id: u32, reason: u8) {
+        let mut payload = [0u8; 10];
+        payload[0] = 4; // CastInterrupted
+        payload[1..5].copy_from_slice(&caster_id.to_be_bytes());
+        payload[5..9].copy_from_slice(&ability_id.to_be_bytes());
+        payload[9] = reason;
+
+        for entity in self.entities.values() {
+            if let Some(peer) = entity.peer_addr {
+                self.send_reliable_event_to_peer(peer, &payload);
+            }
+        }
+    }
+
+    fn broadcast_cast_completed(&self, caster_id: u32, ability_id: u32) {
+        let mut payload = [0u8; 9];
+        payload[0] = 5; // CastCompleted
+        payload[1..5].copy_from_slice(&caster_id.to_be_bytes());
+        payload[5..9].copy_from_slice(&ability_id.to_be_bytes());
+
+        for entity in self.entities.values() {
+            if let Some(peer) = entity.peer_addr {
+                self.send_reliable_event_to_peer(peer, &payload);
+            }
+        }
+    }
+
+    fn broadcast_combat_action(&self, source_id: u32, target_id: u32, action: u8, value: u32) {
+        let mut payload = [0u8; 14];
+        payload[0] = 1; // CombatAction
+        payload[1..5].copy_from_slice(&source_id.to_be_bytes());
+        payload[5..9].copy_from_slice(&target_id.to_be_bytes());
+        payload[9] = action;
+        payload[10..14].copy_from_slice(&value.to_be_bytes());
+
+        for entity in self.entities.values() {
+            if let Some(peer) = entity.peer_addr {
+                self.send_reliable_event_to_peer(peer, &payload);
+            }
+        }
+    }
+
+    fn broadcast_equipment_changed(&self, entity_id: u32, slot: u8, item_id: u32) {
+        let mut payload = [0u8; 10];
+        payload[0] = 7; // EquipmentChanged
+        payload[1..5].copy_from_slice(&entity_id.to_be_bytes());
+        payload[5] = slot;
+        payload[6..10].copy_from_slice(&item_id.to_be_bytes());
+
+        for entity in self.entities.values() {
+            if let Some(peer) = entity.peer_addr {
+                self.send_reliable_event_to_peer(peer, &payload);
+            }
+        }
+    }
+
+    fn send_party_updated_to_peer(
+        &self,
+        peer: SocketAddr,
+        party_id: u64,
+        leader_id: u64,
+        count: u8,
+    ) {
+        let mut payload = [0u8; 18];
+        payload[0] = 8; // PartyUpdated
+        payload[1..9].copy_from_slice(&party_id.to_be_bytes());
+        payload[9..17].copy_from_slice(&leader_id.to_be_bytes());
+        payload[17] = count;
+        self.send_reliable_event_to_peer(peer, &payload);
+    }
+
+    fn broadcast_party_updated(&self, party_id: u64, leader_id: u64, count: u8) {
+        if let Some(party) = self.party_manager.get_party(party_id) {
+            for member in &party.members {
+                if let Some(peer) = self
+                    .entities
+                    .values()
+                    .find(|e| e.account_id == Some(member.account_id))
+                    .and_then(|e| e.peer_addr)
+                {
+                    self.send_party_updated_to_peer(peer, party_id, leader_id, count);
+                }
+            }
+        }
+    }
+
+    fn send_loot_event(&self, peer: SocketAddr, entity_id: u32, item_id: u32, amount: u32) {
+        let mut payload = [0u8; 13];
+        payload[0] = 2; // LootAcquired
+        payload[1..5].copy_from_slice(&entity_id.to_be_bytes());
+        payload[5..9].copy_from_slice(&item_id.to_be_bytes());
+        payload[9..13].copy_from_slice(&amount.to_be_bytes());
+        self.send_reliable_event_to_peer(peer, &payload);
     }
 }

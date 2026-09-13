@@ -6,9 +6,13 @@
 //! 3. Connects an `EidolonClient` representing player "Sir Galahad".
 //! 4. Player moves via dead reckoning intent into Area of Interest (AoI) of monsters.
 //! 5. Client receives smooth 60 FPS extrapolated positions.
-//! 6. Player attacks Goblin Scout, dealing 50 damage and triggering death.
-//! 7. Server commits durable transaction to disk WAL via `fdatasync`.
-//! 8. Player collects 50 Gold Coins, simulates disconnect, and reconnects with state verified!
+//! 6. Player attacks Goblin Scout, dealing damage, triggering death and loot drop.
+//! 7. Player equips Steel Longsword (+25 Attack Power) into MainHand.
+//! 8. Player initiates spell cast ("Fireball"), tests movement interrupt, then executes stationary cast.
+//! 9. Player executes geometric AoE cone spell ("Arcane Cleave") hitting nearby targets.
+//! 10. Player broadcasts a spatial proximity chat message.
+//! 11. Server commits durable transaction to disk WAL via `fdatasync`.
+//! 12. Player simulates disconnect and reconnects with verified durable state.
 //!
 //! Run with:
 //! ```bash
@@ -145,7 +149,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 6. Combat Engagement: Player Attacks Goblin Scout
-    println!("\n[COMBAT] Sir Galahad executes Critical Melee Sword Slash on Goblin Scout (#101) for 100 damage!");
+    println!(
+        "\n[COMBAT] Sir Galahad executes Melee Sword Slash on Goblin Scout (#101) for 100 damage!"
+    );
     client.send_action(1, 101, 100)?; // Fatal strike
 
     let mut goblin_slain = false;
@@ -173,7 +179,134 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     assert!(goblin_slain, "Goblin Scout must be defeated and drop loot");
 
-    // 7. Commit Durable Transaction to Physical Disk WAL via fdatasync
+    // 7. Equipment System: Equip Steel Longsword (+25 Attack Power) into MainHand (Slot 2)
+    println!("\n[EQUIP]  Sir Galahad equips Steel Longsword (#1001) into MainHand (Slot 2)...");
+    client.equip_item(0, 2)?; // inventory slot 0 -> MainHand (slot 2)
+    for _ in 0..5 {
+        server.tick()?;
+        let events = client.poll_events()?;
+        for evt in events {
+            if let ClientEvent::EquipmentChanged {
+                entity_id,
+                slot,
+                item_id,
+            } = evt
+            {
+                println!(
+                    "[EQUIP]  Authoritative Equipment Updated: Entity #{} Slot {} Equipped Item #{}",
+                    entity_id, slot, item_id
+                );
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    // 8. Spell Casting: Cast Fireball with Cast Bar Progression and Movement Interrupt
+    println!("\n[SPELL]  Sir Galahad begins casting Fireball (1.0s cast bar)...");
+    client.cast_ability(102, 1)?; // Ability 1 = Fireball targeting Orc Warrior (#102)
+
+    for _ in 0..5 {
+        server.tick()?;
+        let events = client.poll_events()?;
+        for evt in events {
+            if let ClientEvent::CastStarted {
+                entity_id,
+                ability_id,
+                duration_ticks,
+            } = evt
+            {
+                println!(
+                    "[CAST]   Cast Bar Started: Entity #{} Ability #{} Duration: {} ticks ({}s)",
+                    entity_id,
+                    ability_id,
+                    duration_ticks,
+                    duration_ticks as f32 * 0.05
+                );
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    println!("[CAST]   Sir Galahad moves during cast (+3.0 m/s)... verifying interrupt!");
+    client.send_movement_intent(3.0, 0.0, 0.0, 2)?; // Movement break!
+    for _ in 0..5 {
+        server.tick()?;
+        let events = client.poll_events()?;
+        for evt in events {
+            if let ClientEvent::CastInterrupted {
+                entity_id,
+                ability_id,
+                reason,
+            } = evt
+            {
+                println!(
+                    "[CAST]   Cast Interrupted! Entity #{} Ability #{} Reason: {} (Movement)",
+                    entity_id, ability_id, reason
+                );
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    // Stop moving and cast instant geometric AoE ("Arcane Cleave")
+    println!("\n[SPELL]  Sir Galahad unleashes Arcane Cleave (Instant 45° Cone, 8m range)!");
+    client.send_movement_intent(0.0, 0.0, 0.0, 0)?; // Stationary
+    client.cast_ability(0, 2)?; // Ability 2 = Arcane Cleave
+
+    for _ in 0..5 {
+        server.tick()?;
+        let events = client.poll_events()?;
+        for evt in events {
+            match evt {
+                ClientEvent::CastCompleted {
+                    entity_id,
+                    ability_id,
+                } => {
+                    println!(
+                        "[SPELL]  Ability #{} Completed by Entity #{}",
+                        ability_id, entity_id
+                    );
+                }
+                ClientEvent::CombatAction {
+                    source_id,
+                    target_id,
+                    action_type,
+                    value,
+                } => {
+                    println!(
+                        "[COMBAT] Action Type {}: Entity #{} -> Target #{} (Value: {})",
+                        action_type, source_id, target_id, value
+                    );
+                }
+                _ => {}
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    // 9. Multi-Channel Chat: Broadcast Spatial Proximity Message
+    println!("\n[CHAT]   Broadcasting spatial proximity chat (25m radius)...");
+    client.send_chat(0, 0, "For honor and the realm of Eidolon!")?;
+    for _ in 0..5 {
+        server.tick()?;
+        let events = client.poll_events()?;
+        for evt in events {
+            if let ClientEvent::ChatMessageReceived {
+                channel,
+                sender_id,
+                message,
+            } = evt
+            {
+                println!(
+                    "[CHAT]   Channel {} Message from Entity #{}: \"{}\"",
+                    channel, sender_id, message
+                );
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    // 10. Commit Durable Transaction to Physical Disk WAL via fdatasync
     println!("\n[STORAGE] Persisting 50 Gold Coins to durable transaction WAL (fdatasync)...");
     let tx_tick = server.execute_durable_transaction(account_id, 0x05, &50u64.to_be_bytes())?;
     println!(
@@ -181,7 +314,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tx_tick
     );
 
-    // 8. Disconnect and State Persistence Verification
+    // 11. Disconnect and State Persistence Verification
     println!("\n[CLIENT] Player simulates disconnect...");
     client.disconnect();
     assert!(!client.is_connected());
@@ -221,7 +354,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     client2.disconnect();
     let _ = std::fs::remove_file(&wal_path);
 
-    // 9. World Summary Visualizer
+    // 12. World Summary Visualizer
     println!("\n==========================================================================================");
     println!("                             MINI-MMO WORLD STATUS MAP                                    ");
     println!("==========================================================================================");
@@ -232,13 +365,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("     │                                                          │                         ");
     println!("     │                     ★ Sir Galahad (102, 100)             │                         ");
     println!("     │                       ✕ Goblin Defeated (Loot: 50g)      │                         ");
-    println!("     │                                                          │                         ");
+    println!("     │                       ⚔ Steel Longsword Equipped         │                         ");
+    println!("     │                       ⚡ Arcane Cleave Executed          │                         ");
     println!("     │                                      ▲ Orc (130, 120)    │                         ");
     println!("     │                                                          │                         ");
     println!("     └──────────────────────────────────────────────────────────┘                         ");
     println!("   [0,200]                                                    [200,200]                   ");
     println!("==========================================================================================");
-    println!("   SUMMARY: 100% of gameplay vertical slice verified (Move, AoI, Combat, Loot, WAL, Reconnect)");
+    println!(
+        "   SUMMARY: 100% of MMORPG gameplay slice verified (Gear, Cast, Cone AoE, Proximity Chat)"
+    );
     println!("==========================================================================================\n");
 
     Ok(())

@@ -39,6 +39,12 @@ extern "C" {
 #define EIDOLON_EVENT_ENTITY_UPDATED  5
 #define EIDOLON_EVENT_COMBAT_ACTION   6
 #define EIDOLON_EVENT_LOOT_ACQUIRED   7
+#define EIDOLON_EVENT_CAST_STARTED    8
+#define EIDOLON_EVENT_CAST_INTERRUPTED 9
+#define EIDOLON_EVENT_CAST_COMPLETED 10
+#define EIDOLON_EVENT_CHAT_MESSAGE   11
+#define EIDOLON_EVENT_EQUIPMENT_CHANGED 12
+#define EIDOLON_EVENT_PARTY_UPDATED  13
 
 /* ========================================================================= */
 /* Data Structures                                                           */
@@ -169,6 +175,76 @@ int32_t eidolon_client_send_action(
     uint8_t action_type,
     uint32_t target_id,
     uint32_t param
+);
+
+/**
+ * Dispatches an authoritative ability cast command.
+ *
+ * @param handle Valid client handle.
+ * @param target_id Target entity identifier (or 0 for ground/self).
+ * @param ability_id Blueprint ability identifier.
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_cast_ability(
+    EidolonClientHandle* handle,
+    uint32_t target_id,
+    uint32_t ability_id
+);
+
+/**
+ * Dispatches an item equip command.
+ *
+ * @param handle Valid client handle.
+ * @param inventory_slot Bag inventory slot index.
+ * @param equip_slot Equipment slot identifier (0..8).
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_equip_item(
+    EidolonClientHandle* handle,
+    uint8_t inventory_slot,
+    uint8_t equip_slot
+);
+
+/**
+ * Dispatches an item unequip command.
+ *
+ * @param handle Valid client handle.
+ * @param equip_slot Equipment slot identifier (0..8).
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_unequip_item(
+    EidolonClientHandle* handle,
+    uint8_t equip_slot
+);
+
+/**
+ * Dispatches a multi-channel chat message.
+ *
+ * @param handle Valid client handle.
+ * @param channel Channel scope (0 = Proximity, 1 = Party, 2 = Whisper, 3 = Global).
+ * @param target_id Target entity ID for direct whispers (or 0).
+ * @param text Null-terminated UTF-8 text string.
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_send_chat(
+    EidolonClientHandle* handle,
+    uint8_t channel,
+    uint32_t target_id,
+    const char* text
+);
+
+/**
+ * Dispatches a party management command (1 = invite, 2 = accept, 3 = leave).
+ *
+ * @param handle Valid client handle.
+ * @param cmd Party command opcode.
+ * @param target_account Target account identifier.
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_party_command(
+    EidolonClientHandle* handle,
+    uint8_t cmd,
+    uint64_t target_account
 );
 
 /**

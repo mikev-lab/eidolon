@@ -515,3 +515,82 @@ int main() {
   $$\vec{P}_{render} = \vec{P}_{base} + \vec{V} \cdot \Delta t$$
   The client uses server-validated velocity intent ($\vec{V}$) and yaw angle ($\theta$) to smoothly advance remote entities between 20 Hz state packet arrivals without visual snapping or rubber-banding.
 - **Quantization**: Coordinates are packed into 16-bit cell-relative integers and 8-bit yaw values over UDP, keeping bandwidth under 1.2 KB/s per client.
+
+---
+
+## 7. Authoritative MMO Gameplay Systems (Abilities, Inventory, Chat & Parties)
+
+The `eidolon-ffi` C ABI and multi-engine wrappers (`EidolonClient.cs` and `EidolonClient.hpp`) provide direct access to authoritative server-side gameplay mechanics.
+
+### 7.1 Available Actions and C# / C++ APIs
+
+| Gameplay Subsystem | C# Method (`EidolonClient.cs`) | C++ Method (`EidolonClient.hpp`) | Action Opcode |
+| :--- | :--- | :--- | :--- |
+| **Abilities & Spells** | `CastAbility(uint abilityId, uint targetId, float x, float y, float z)` | `cast_ability(uint32_t ability_id, uint32_t target_id, float x, float y, float z)` | `0x02` |
+| **Equip Item** | `EquipItem(byte slot, uint itemId)` | `equip_item(uint8_t slot, uint32_t item_id)` | `0x03` |
+| **Unequip Item** | `UnequipItem(byte slot)` | `unequip_item(uint8_t slot)` | `0x04` |
+| **Multi-Channel Chat**| `SendChat(byte channel, uint recipientId, string message)` | `send_chat(uint8_t channel, uint32_t recipient_id, const std::string& message)` | `0x05` |
+| **Party Management** | `PartyCommand(byte command, uint targetAccountId)` | `party_command(uint8_t command, uint32_t target_account_id)` | `0x06` |
+
+### 7.2 Gameplay Event Callbacks
+
+Register callbacks to update your engine UI, HUD, cast bars, party frames, and inventory panels:
+
+#### C# (Unity & Godot):
+```csharp
+// 1. Cast Bar Progress & Interrupts
+client.OnCastStarted += (entityId, abilityId, durationTicks) => {
+    float durationSeconds = durationTicks * 0.050f; // 50ms tick interval
+    hud.StartCastBar(entityId, abilityId, durationSeconds);
+};
+
+client.OnCastInterrupted += (entityId, reason) => {
+    hud.InterruptCastBar(entityId, reason == 1 ? "Moved" : "Damaged");
+};
+
+client.OnCastCompleted += (entityId, abilityId) => {
+    hud.CompleteCastBar(entityId, abilityId);
+};
+
+// 2. Multi-Channel Chat
+client.OnChatMessage += (channel, senderAccount, senderName, message) => {
+    chatBox.AddMessage(channel switch {
+        0 => "[Proximity]",
+        1 => "[Party]",
+        2 => "[Whisper]",
+        3 => "[Global]",
+        _ => "[System]"
+    }, senderName, message);
+};
+
+// 3. Equipment Updates
+client.OnEquipmentChanged += (account, slot, itemId, attackPower, armor) => {
+    inventoryUI.UpdateSlot(slot, itemId);
+    characterStats.UpdateStats(attackPower, armor);
+};
+
+// 4. Party Vitals (Up to 8 members)
+client.OnPartyUpdated += (partyId, leaderId, memberCount, members) => {
+    partyFrames.RenderGroup(members);
+};
+```
+
+#### C++ (Unreal Engine 5 & Custom Engines):
+```cpp
+// Cast started event
+client.SetCastStartedCallback([](uint32_t entity_id, uint32_t ability_id, uint16_t duration_ticks) {
+    float duration = duration_ticks * 0.050f;
+    // Update UE5 UMG Cast Bar Widget
+});
+
+// Chat message received
+client.SetChatMessageCallback([](uint8_t channel, uint32_t sender_id, const char* name, const char* text) {
+    // Append to in-game chat log
+});
+
+// Equip a weapon from C++
+client.equip_item(2 /* MainHand */, 1001 /* Steel Longsword */);
+
+// Cast an AoE cone cleave
+client.cast_ability(2 /* Arcane Cleave */, 0 /* target */, 15.0f, 0.0f, 5.0f);
+```

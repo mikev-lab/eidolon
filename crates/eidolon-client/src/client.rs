@@ -393,6 +393,95 @@ impl EidolonClient {
         Ok(())
     }
 
+    /// Dispatches an ability cast request targeting an entity.
+    pub fn cast_ability(&mut self, ability_id: u32, target_id: u32) -> Result<(), ClientError> {
+        self.send_action(2, target_id, ability_id)
+    }
+
+    /// Dispatches an equip item request swapping inventory slot into equipment slot.
+    pub fn equip_item(&mut self, inventory_slot: u8, equip_slot: u8) -> Result<(), ClientError> {
+        self.send_action(3, inventory_slot as u32, equip_slot as u32)
+    }
+
+    /// Dispatches an unequip item request moving gear from equipment slot to inventory.
+    pub fn unequip_item(&mut self, equip_slot: u8) -> Result<(), ClientError> {
+        self.send_action(4, equip_slot as u32, 0)
+    }
+
+    /// Dispatches a chat message to the server for distribution.
+    pub fn send_chat(
+        &mut self,
+        channel: u8,
+        target_id: u32,
+        message: &str,
+    ) -> Result<(), ClientError> {
+        if !self.is_connected() {
+            return Err(ClientError::NotConnected);
+        }
+
+        let header = PacketHeader::new(
+            ChannelType::ReliableOrdered,
+            PacketType::ReliableMessage,
+            self.send_seq,
+            self.recv_seq,
+            self.ack_mask,
+        );
+        self.send_seq = self.send_seq.wrapping_add(1);
+
+        let mut wire_buf = [0u8; 512];
+        let hdr_len = header.write_to(&mut wire_buf)?;
+
+        let text_bytes = message.as_bytes();
+        let text_len = text_bytes.len().min(256) as u16;
+
+        let mut idx = hdr_len;
+        wire_buf[idx] = 5; // 5 = chat message action
+        idx += 1;
+        wire_buf[idx] = channel;
+        idx += 1;
+        wire_buf[idx..idx + 4].copy_from_slice(&target_id.to_be_bytes());
+        idx += 4;
+        wire_buf[idx..idx + 2].copy_from_slice(&text_len.to_be_bytes());
+        idx += 2;
+        wire_buf[idx..idx + text_len as usize].copy_from_slice(&text_bytes[..text_len as usize]);
+        idx += text_len as usize;
+
+        self.socket
+            .send_to(&wire_buf[..idx], self.config.server_addr)?;
+        Ok(())
+    }
+
+    /// Dispatches a party management command (1 = invite, 2 = accept, 3 = leave).
+    pub fn party_command(&mut self, cmd: u8, target_account: u64) -> Result<(), ClientError> {
+        if !self.is_connected() {
+            return Err(ClientError::NotConnected);
+        }
+
+        let header = PacketHeader::new(
+            ChannelType::ReliableOrdered,
+            PacketType::ReliableMessage,
+            self.send_seq,
+            self.recv_seq,
+            self.ack_mask,
+        );
+        self.send_seq = self.send_seq.wrapping_add(1);
+
+        let mut wire_buf = [0u8; 64];
+        let hdr_len = header.write_to(&mut wire_buf)?;
+
+        let mut idx = hdr_len;
+        wire_buf[idx] = 6; // 6 = party command
+        idx += 1;
+        wire_buf[idx] = cmd;
+        idx += 1;
+        wire_buf[idx..idx + 8].copy_from_slice(&target_account.to_be_bytes());
+        idx += 8;
+
+        self.socket
+            .send_to(&wire_buf[..idx], self.config.server_addr)?;
+        Ok(())
+    }
+
     /// Extrapolates an entity's transform to current render frame given delta time in seconds.
     pub fn extrapolate_entity(&self, entity_id: u32, delta_time: f32) -> Option<ClientTransform> {
         self.world_view.extrapolate_entity(entity_id, delta_time)
@@ -534,8 +623,7 @@ impl EidolonClient {
             2 if payload.len() >= 13 => {
                 let entity_id =
                     u32::from_be_bytes([payload[1], payload[2], payload[3], payload[4]]);
-                let item_id =
-                    u32::from_be_bytes([payload[5], payload[6], payload[7], payload[8]]);
+                let item_id = u32::from_be_bytes([payload[5], payload[6], payload[7], payload[8]]);
                 let amount =
                     u32::from_be_bytes([payload[9], payload[10], payload[11], payload[12]]);
 
@@ -543,6 +631,99 @@ impl EidolonClient {
                     entity_id,
                     item_id,
                     amount,
+                });
+            }
+            // Cast started: type (1B) + entity_id (4B) + ability_id (4B) + duration_ticks (4B) = 13B
+            3 if payload.len() >= 13 => {
+                let entity_id =
+                    u32::from_be_bytes([payload[1], payload[2], payload[3], payload[4]]);
+                let ability_id =
+                    u32::from_be_bytes([payload[5], payload[6], payload[7], payload[8]]);
+                let duration_ticks =
+                    u32::from_be_bytes([payload[9], payload[10], payload[11], payload[12]]);
+
+                events.push(ClientEvent::CastStarted {
+                    entity_id,
+                    ability_id,
+                    duration_ticks,
+                });
+            }
+            // Cast interrupted: type (1B) + entity_id (4B) + ability_id (4B) + reason (1B) = 10B
+            4 if payload.len() >= 10 => {
+                let entity_id =
+                    u32::from_be_bytes([payload[1], payload[2], payload[3], payload[4]]);
+                let ability_id =
+                    u32::from_be_bytes([payload[5], payload[6], payload[7], payload[8]]);
+                let reason = payload[9];
+
+                events.push(ClientEvent::CastInterrupted {
+                    entity_id,
+                    ability_id,
+                    reason,
+                });
+            }
+            // Cast completed: type (1B) + entity_id (4B) + ability_id (4B) = 9B
+            5 if payload.len() >= 9 => {
+                let entity_id =
+                    u32::from_be_bytes([payload[1], payload[2], payload[3], payload[4]]);
+                let ability_id =
+                    u32::from_be_bytes([payload[5], payload[6], payload[7], payload[8]]);
+
+                events.push(ClientEvent::CastCompleted {
+                    entity_id,
+                    ability_id,
+                });
+            }
+            // Chat received: type (1B) + channel (1B) + sender_id (4B) + text_len (2B) + text_bytes = 8B + len
+            6 if payload.len() >= 8 => {
+                let channel = payload[1];
+                let sender_id =
+                    u32::from_be_bytes([payload[2], payload[3], payload[4], payload[5]]);
+                let text_len = u16::from_be_bytes([payload[6], payload[7]]) as usize;
+                if payload.len() >= 8 + text_len {
+                    let message = String::from_utf8_lossy(&payload[8..8 + text_len]).into_owned();
+                    events.push(ClientEvent::ChatMessageReceived {
+                        channel,
+                        sender_id,
+                        message,
+                    });
+                }
+            }
+            // Equipment changed: type (1B) + entity_id (4B) + slot (1B) + item_id (4B) = 10B
+            7 if payload.len() >= 10 => {
+                let entity_id =
+                    u32::from_be_bytes([payload[1], payload[2], payload[3], payload[4]]);
+                let slot = payload[5];
+                let item_id = u32::from_be_bytes([payload[6], payload[7], payload[8], payload[9]]);
+
+                events.push(ClientEvent::EquipmentChanged {
+                    entity_id,
+                    slot,
+                    item_id,
+                });
+            }
+            // Party updated: type (1B) + party_id (8B) + leader_id (8B) + member_count (1B) = 18B
+            8 if payload.len() >= 18 => {
+                let party_id = u64::from_be_bytes([
+                    payload[1], payload[2], payload[3], payload[4], payload[5], payload[6],
+                    payload[7], payload[8],
+                ]);
+                let leader_account_id = u64::from_be_bytes([
+                    payload[9],
+                    payload[10],
+                    payload[11],
+                    payload[12],
+                    payload[13],
+                    payload[14],
+                    payload[15],
+                    payload[16],
+                ]);
+                let member_count = payload[17];
+
+                events.push(ClientEvent::PartyUpdated {
+                    party_id,
+                    leader_account_id,
+                    member_count,
                 });
             }
             _ => {}

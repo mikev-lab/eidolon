@@ -100,7 +100,13 @@ An unoptimized MMO streaming raw 32-bit coordinates at 20 KB/s per player to 100
 - **Side-Channel Defense:** Constant-time 32-byte equality check (`constant_time_eq`) protected by compiler `core::hint::black_box` barriers to defeat timing side-channel attacks.
 - **Enterprise Pluggability:** Abstract `CryptoProvider` trait enables drop-in substitution of hardware-accelerated or FIPS-140 certified HSM backends.
 
-### 7. Gacha & Long-Tail EoS Preservation
+### 8. Authoritative MMO Gameplay Systems & Tooling
+- **Equipment & Stat Aggregation:** 9-slot gear system (`Head`, `Chest`, `MainHand`, `OffHand`, `Legs`, `Feet`, `Ring1`, `Ring2`, `Amulet`) with saturating stat modifiers (`health_bonus`, `attack_power`, `armor`, `speed_bonus`) and atomic WAL-backed equip transactions.
+- **Cast Bars & Movement Interrupts:** Deterministic cast progress state machine with automatic interrupt detection on $>0.5$m displacement and damage reception.
+- **Fixed-Point Geometric AoE (Zero Sqrt):** 32.32 fixed-point Cone, Sphere, and Box collision queries evaluated via algebraic vector squaring and forward yaw dot products without square roots or trigonometric calls.
+- **Proximity Chat & Party Management:** 25-meter spatial proximity chat with token bucket rate limiting, alongside 8-player party coordination with real-time health and mana vitals replication.
+
+### 9. Gacha & Long-Tail EoS Preservation
 - **Scale-to-Zero Co-op Instances:** Ephemeral battle rooms spin up in `<50ms` only when parties enter a portal. When no instances are running, compute cost drops to $0.
 - **Cold-State Account Hibernation:** Inactive player rosters, pity counters, and inventories compress into cold storage binary snapshots (<256 bytes per account, <2 µs hydration), enabling games to run in **Perpetual Maintenance Mode** indefinitely.
 
@@ -136,7 +142,7 @@ An unoptimized MMO streaming raw 32-bit coordinates at 20 KB/s per player to 100
 
 ## Playable Mini-MMO Vertical Slice
 
-To experience the entire end-to-end stack running authoritatively with real UDP sockets, 20 Hz simulation tick, 44-bit quantization AoI broadcast, 60 FPS client-side dead reckoning extrapolation, combat, loot generation, and durable WAL `fdatasync`, run the self-contained vertical slice:
+To experience the entire end-to-end stack running authoritatively with real UDP sockets, 20 Hz simulation tick, 44-bit quantization AoI broadcast, 60 FPS client-side dead reckoning extrapolation, gear equipping, spell casting with movement interrupts, cone AoE cleave, proximity chat, and durable WAL `fdatasync`, run the self-contained vertical slice:
 
 ```bash
 cargo run -p eidolon-server --example tiny_mmo
@@ -148,10 +154,13 @@ cargo run -p eidolon-server --example tiny_mmo
 3. **Cryptographic 3-Way Handshake:** Connects a native client (`Sir Galahad`) through challenge/proof tokens.
 4. **Dynamic AoI Discovery:** Streams nearby monster transforms bitpacked into 22-byte diff updates.
 5. **WASD Intent & 60 FPS Dead Reckoning:** Streams movement vectors and executes deterministic kinematic extrapolation between 50ms server ticks with zero rubber-banding.
-6. **Authoritative Combat & Loot:** Sir Galahad slashes the Goblin Scout, triggering health subtraction, monster defeat, and loot drop emission.
-7. **Durable WAL Barrier:** Persists the acquired gold transaction to disk via physical `fdatasync`.
-8. **Crash & Reconnect Resumption:** Client disconnects and immediately reconnects, resuming authenticated session state.
-9. **ASCII World Status Map:** Visualizes final player, monster, and defeated entity coordinates in terminal.
+6. **Authoritative Equipment & Stats:** Equips Steel Longsword (+15 AP) and Kite Shield (+20 Armor) via atomic durable transaction.
+7. **Cast Bar & Movement Interrupt:** Initiates a 3-second Fireball cast; cancels it upon moving $>0.5$m with a reliable `CastInterrupted` event.
+8. **Geometric Cone AoE Cleave:** Casts Arcane Cleave (45-degree cone, 8m range) hitting both the Goblin Scout and Orc Warrior in front.
+9. **Spatial Proximity Chat:** Sends local chat message routed exclusively to entities within 25.0 meters.
+10. **Durable WAL Barrier:** Persists transactions to disk via physical `fdatasync`.
+11. **Crash & Reconnect Resumption:** Client disconnects and immediately reconnects, resuming authenticated session state.
+12. **ASCII World Status Map:** Visualizes final player, monster, and defeated entity coordinates in terminal.
 
 ---
 

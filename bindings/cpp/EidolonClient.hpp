@@ -99,6 +99,41 @@ public:
     }
 
     /**
+     * Dispatches an authoritative ability cast command.
+     */
+    bool cast_ability(uint32_t target_id, uint32_t ability_id) {
+        return eidolon_client_cast_ability(m_handle.get(), target_id, ability_id) == EIDOLON_OK;
+    }
+
+    /**
+     * Dispatches an item equip command.
+     */
+    bool equip_item(uint8_t inventory_slot, uint8_t equip_slot) {
+        return eidolon_client_equip_item(m_handle.get(), inventory_slot, equip_slot) == EIDOLON_OK;
+    }
+
+    /**
+     * Dispatches an item unequip command.
+     */
+    bool unequip_item(uint8_t equip_slot) {
+        return eidolon_client_unequip_item(m_handle.get(), equip_slot) == EIDOLON_OK;
+    }
+
+    /**
+     * Dispatches a multi-channel chat message.
+     */
+    bool send_chat(uint8_t channel, uint32_t target_id, const std::string& text) {
+        return eidolon_client_send_chat(m_handle.get(), channel, target_id, text.c_str()) == EIDOLON_OK;
+    }
+
+    /**
+     * Dispatches a party management command (1 = invite, 2 = accept, 3 = leave).
+     */
+    bool party_command(uint8_t cmd, uint64_t target_account) {
+        return eidolon_client_party_command(m_handle.get(), cmd, target_account) == EIDOLON_OK;
+    }
+
+    /**
      * Extrapolates an entity's transform using deterministic dead reckoning.
      */
     std::optional<EidolonTransform> extrapolate_entity(uint32_t entity_id, float delta_time) {

@@ -7,9 +7,11 @@
 
 use std::collections::HashMap;
 
+use eidolon_core::item::EquipmentSlot;
 use eidolon_core::lock::{GenerationLockRegistry, LockError, LockToken};
 
 use crate::durable_journal::CommitDurability;
+use crate::equipment::EquipmentContainer;
 use crate::error::WorldError;
 use crate::wal::{WriteAheadJournal, OP_CURRENCY_DELTA, OP_INVENTORY_MUTATION};
 
@@ -44,6 +46,8 @@ pub struct AccountState {
     pub free_currency: u64,
     /// Owned item slots.
     pub inventory: [Option<InventoryItem>; MAX_INVENTORY_SLOTS],
+    /// Equipped character gear container.
+    pub equipment: EquipmentContainer,
     /// Monotonically incrementing state version.
     pub state_version: u64,
 }
@@ -56,6 +60,7 @@ impl AccountState {
             premium_currency: 0,
             free_currency: 0,
             inventory: [None; MAX_INVENTORY_SLOTS],
+            equipment: EquipmentContainer::new(),
             state_version: 1,
         }
     }
@@ -140,6 +145,55 @@ impl AccountState {
 
         Err(WorldError::ItemNotFound(item_id))
     }
+
+    /// Equips an item from an inventory slot into an equipment slot.
+    ///
+    /// Swaps with previously equipped item if one was present.
+    pub fn equip_item(
+        &mut self,
+        inventory_slot_idx: usize,
+        slot: EquipmentSlot,
+    ) -> Result<(), WorldError> {
+        if inventory_slot_idx >= MAX_INVENTORY_SLOTS {
+            return Err(WorldError::TransactionAborted("Invalid inventory slot"));
+        }
+
+        let item = self.inventory[inventory_slot_idx]
+            .ok_or(WorldError::TransactionAborted("No item in inventory slot"))?;
+
+        let prev = self.equipment.equip(slot, item.item_id)?;
+
+        // If item was previously equipped, place it in inventory slot; otherwise clear slot
+        if let Some(prev_id) = prev {
+            self.inventory[inventory_slot_idx] = Some(InventoryItem {
+                item_id: prev_id,
+                quantity: 1,
+            });
+        } else {
+            self.inventory[inventory_slot_idx] = None;
+        }
+
+        self.state_version += 1;
+        Ok(())
+    }
+
+    /// Unequips an item from an equipment slot back into inventory.
+    pub fn unequip_item(&mut self, slot: EquipmentSlot) -> Result<u32, WorldError> {
+        let item_id = self
+            .equipment
+            .unequip(slot)?
+            .ok_or(WorldError::TransactionAborted("No item equipped in slot"))?;
+
+        // Add back to inventory
+        if let Err(e) = self.add_item(item_id, 1) {
+            // Rollback equip on failure
+            let _ = self.equipment.equip(slot, item_id);
+            return Err(e);
+        }
+
+        self.state_version += 1;
+        Ok(item_id)
+    }
 }
 
 /// Transaction operation specification.
@@ -175,6 +229,22 @@ pub enum TransactionOp {
         item_id: u32,
         /// Stack quantity transferred.
         quantity: u32,
+    },
+    /// Atomic equip item from inventory into equipment slot.
+    EquipItem {
+        /// Account modifying gear.
+        account_id: u64,
+        /// Source inventory slot index.
+        inventory_slot: u8,
+        /// Destination equipment slot opcode.
+        equip_slot: u8,
+    },
+    /// Atomic unequip item from equipment slot back to inventory.
+    UnequipItem {
+        /// Account modifying gear.
+        account_id: u64,
+        /// Source equipment slot opcode.
+        equip_slot: u8,
     },
 }
 
@@ -221,6 +291,11 @@ impl TransactionManager {
     /// Retrieves an immutable reference to an active account state.
     pub fn get_account(&self, account_id: u64) -> Option<&AccountState> {
         self.accounts.get(&account_id)
+    }
+
+    /// Retrieves a mutable reference to an active account state.
+    pub fn get_account_mut(&mut self, account_id: u64) -> Option<&mut AccountState> {
+        self.accounts.get_mut(&account_id)
     }
 
     /// Acquires a generation lock on an account resource (wallet or inventory).
@@ -436,6 +511,75 @@ impl TransactionManager {
                     0,
                     OP_INVENTORY_MUTATION,
                     &payload[..16],
+                )?
+            }
+
+            TransactionOp::EquipItem {
+                account_id,
+                inventory_slot,
+                equip_slot,
+            } => {
+                if source_token.account_id != account_id || source_token.lock_id != LOCK_INVENTORY {
+                    return Err(WorldError::TransactionAborted(
+                        "Invalid inventory lock token",
+                    ));
+                }
+
+                let slot = EquipmentSlot::from_u8(equip_slot)
+                    .ok_or(WorldError::TransactionAborted("Invalid equipment slot"))?;
+
+                let account = self
+                    .accounts
+                    .get_mut(&account_id)
+                    .ok_or(WorldError::TransactionAborted("Account not found"))?;
+
+                account.equip_item(inventory_slot as usize, slot)?;
+
+                let mut payload = [0u8; 8];
+                payload[0] = 1; // 1 = equip
+                payload[1] = inventory_slot;
+                payload[2] = equip_slot;
+
+                journal.append(
+                    current_tick,
+                    account_id,
+                    0,
+                    OP_INVENTORY_MUTATION,
+                    &payload[..3],
+                )?
+            }
+
+            TransactionOp::UnequipItem {
+                account_id,
+                equip_slot,
+            } => {
+                if source_token.account_id != account_id || source_token.lock_id != LOCK_INVENTORY {
+                    return Err(WorldError::TransactionAborted(
+                        "Invalid inventory lock token",
+                    ));
+                }
+
+                let slot = EquipmentSlot::from_u8(equip_slot)
+                    .ok_or(WorldError::TransactionAborted("Invalid equipment slot"))?;
+
+                let account = self
+                    .accounts
+                    .get_mut(&account_id)
+                    .ok_or(WorldError::TransactionAborted("Account not found"))?;
+
+                let item_id = account.unequip_item(slot)?;
+
+                let mut payload = [0u8; 8];
+                payload[0] = 2; // 2 = unequip
+                payload[1] = equip_slot;
+                payload[2..6].copy_from_slice(&item_id.to_be_bytes());
+
+                journal.append(
+                    current_tick,
+                    account_id,
+                    0,
+                    OP_INVENTORY_MUTATION,
+                    &payload[..6],
                 )?
             }
         };
