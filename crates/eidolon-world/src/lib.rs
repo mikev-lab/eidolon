@@ -7,7 +7,9 @@
 #![warn(missing_docs)]
 
 pub mod ability;
+pub mod building;
 pub mod chat;
+pub mod chunk_manifest;
 pub mod cluster;
 pub mod companion;
 pub mod durable_journal;
@@ -15,6 +17,7 @@ pub mod equipment;
 pub mod error;
 pub mod hibernation;
 pub mod instance;
+pub mod interior;
 pub mod partition;
 pub mod party;
 pub mod reconstruction;
@@ -28,8 +31,13 @@ pub use ability::{
     get_ability_definition, AbilityDefinition, AbilityShape, CastInterruptedReason, CastState,
     CooldownTracker,
 };
+pub use building::{StructureInstance, StructureManager, StructurePiece};
 pub use chat::{
     is_within_proximity, ChatChannel, ChatMessage, ChatRateLimiter, DEFAULT_PROXIMITY_RADIUS_METERS,
+};
+pub use chunk_manifest::{
+    ChunkCoord, ChunkManifestManager, StructureChunk, StructureDeltaPacket,
+    STRUCTURE_CHUNK_EDGE_METERS,
 };
 pub use cluster::{
     ClusterTickMetrics, ClusterTopologyConfig, ClusterZoneNode, MultiServerClusterHarness,
@@ -48,6 +56,7 @@ pub use hibernation::{
 pub use instance::{
     DungeonInstance, DungeonPool, InstanceLifecycle, MAX_PARTY_MEMBERS, ROOM_CLEANUP_TIMEOUT_TICKS,
 };
+pub use interior::{InteriorCell, InteriorCellManager, MAX_INTERIOR_ITEMS_PER_BUILDING};
 pub use partition::{
     BoundaryLease, EntityPartitionState, ZonePartitionDetector, ZonePartitionManager,
     DEFAULT_LEASE_DURATION_TICKS, DEFAULT_PARTITION_TIMEOUT_TICKS,

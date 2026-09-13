@@ -7,6 +7,7 @@
 #![warn(missing_docs)]
 
 pub mod aoi;
+pub mod bvh;
 pub mod grid;
 pub mod tier;
 
@@ -15,6 +16,7 @@ pub use aoi::{
     ObserverInterestSet, RelevanceWeights, VisibilityEvent, MAX_AOI_5TIER_RADIUS_SQ,
     MAX_AOI_RADIUS_METERS, MAX_AOI_RADIUS_SQ,
 };
+pub use bvh::{BvhLeafPiece, CompoundStructure, RayHit};
 pub use grid::{
     CellCoord, SpatialError, SpatialHashGrid, SpatialQueryResult, CELL_HORIZONTAL_SIZE,
     CELL_VERTICAL_SIZE,

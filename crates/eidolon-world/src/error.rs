@@ -115,6 +115,16 @@ pub enum WorldError {
         /// Number of acknowledgments successfully obtained.
         actual: usize,
     },
+    /// Requested structure identifier was not found in the world.
+    StructureNotFound(u32),
+    /// Requested building piece identifier was not found in the structure.
+    PieceNotFound(u32),
+    /// Building piece placement rejected because structural stability decayed to zero.
+    StructurallyUnsound,
+    /// Requested interior cell identifier was not found.
+    InteriorCellNotFound(u32),
+    /// Interior cell capacity reached (maximum 3,000 items per building).
+    InteriorCellFull,
 }
 
 impl fmt::Display for WorldError {
@@ -187,6 +197,16 @@ impl fmt::Display for WorldError {
                     f,
                     "Quorum replication failed: required {required} acks, obtained {actual}"
                 )
+            }
+            Self::StructureNotFound(id) => write!(f, "Structure {id} not found in world"),
+            Self::PieceNotFound(id) => write!(f, "Piece {id} not found in structure"),
+            Self::StructurallyUnsound => write!(
+                f,
+                "Building piece placement rejected: structurally unsound (zero stability)"
+            ),
+            Self::InteriorCellNotFound(id) => write!(f, "Interior cell {id} not found"),
+            Self::InteriorCellFull => {
+                write!(f, "Interior cell item capacity exceeded (max 3,000 items)")
             }
         }
     }

@@ -15,6 +15,7 @@ pub mod kinematics;
 pub mod lock;
 pub mod morton;
 pub mod quant;
+pub mod structure;
 pub mod trace;
 
 pub use authority::{AuthorityError, AuthorityFencer, AuthorityToken, AUTHORITY_TOKEN_LEN};
@@ -40,6 +41,11 @@ pub use quant::{
     QuantizedCellCoord, QuantizedYaw, CELL_HORIZONTAL_SIZE, CELL_VERTICAL_SIZE,
     HORIZONTAL_RESOLUTION_METERS, MAX_QUANTIZED_HORIZONTAL, MAX_QUANTIZED_VERTICAL,
     VERTICAL_RESOLUTION_METERS,
+};
+pub use structure::{
+    calculate_stability, InteriorItemRecord, InteriorItemTransform, MaterialType, PieceType,
+    SnapSocket, StructurePieceData, MAX_STABILITY, STANDARD_GRID_HORIZONTAL_METERS,
+    STANDARD_GRID_VERTICAL_METERS,
 };
 pub use trace::{TraceContext, TraceRingBuffer, TraceSpan};
 

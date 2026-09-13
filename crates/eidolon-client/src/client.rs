@@ -500,6 +500,112 @@ impl EidolonClient {
         Ok(())
     }
 
+    /// Dispatches a building placement request (modular prefab or freeform piece).
+    pub fn place_structure(
+        &mut self,
+        prefab_type_id: u32,
+        x: f32,
+        y: f32,
+        z: f32,
+        yaw_degrees: f32,
+    ) -> Result<(), ClientError> {
+        if !self.is_connected() {
+            return Err(ClientError::NotConnected);
+        }
+
+        let header = PacketHeader::new(
+            ChannelType::ReliableOrdered,
+            PacketType::ReliableMessage,
+            self.send_seq,
+            self.recv_seq,
+            self.ack_mask,
+        );
+        self.send_seq = self.send_seq.wrapping_add(1);
+
+        let mut wire_buf = [0u8; 64];
+        let hdr_len = header.write_to(&mut wire_buf)?;
+
+        let mut idx = hdr_len;
+        wire_buf[idx] = 6; // 6 = place structure action
+        idx += 1;
+        wire_buf[idx..idx + 4].copy_from_slice(&prefab_type_id.to_be_bytes());
+        idx += 4;
+        wire_buf[idx..idx + 4].copy_from_slice(&x.to_be_bytes());
+        idx += 4;
+        wire_buf[idx..idx + 4].copy_from_slice(&y.to_be_bytes());
+        idx += 4;
+        wire_buf[idx..idx + 4].copy_from_slice(&z.to_be_bytes());
+        idx += 4;
+        wire_buf[idx..idx + 4].copy_from_slice(&yaw_degrees.to_be_bytes());
+        idx += 4;
+
+        self.socket
+            .send_to(&wire_buf[..idx], self.config.server_addr)?;
+        Ok(())
+    }
+
+    /// Dispatches a structure demolition request.
+    pub fn destroy_structure(&mut self, structure_id: u32) -> Result<(), ClientError> {
+        self.send_action(7, structure_id, 0)
+    }
+
+    /// Dispatches an interior cell entry request.
+    pub fn enter_interior_cell(&mut self, cell_id: u32) -> Result<(), ClientError> {
+        self.send_action(8, cell_id, 0)
+    }
+
+    /// Dispatches an interior cell exit request back to the open world.
+    pub fn exit_interior_cell(&mut self) -> Result<(), ClientError> {
+        self.send_action(9, 0, 0)
+    }
+
+    /// Dispatches a decorative interior item move / update command.
+    pub fn move_interior_item(
+        &mut self,
+        cell_id: u32,
+        item_instance_id: u32,
+        local_x: f32,
+        local_y: f32,
+        local_z: f32,
+        yaw_degrees: f32,
+    ) -> Result<(), ClientError> {
+        if !self.is_connected() {
+            return Err(ClientError::NotConnected);
+        }
+
+        let header = PacketHeader::new(
+            ChannelType::ReliableOrdered,
+            PacketType::ReliableMessage,
+            self.send_seq,
+            self.recv_seq,
+            self.ack_mask,
+        );
+        self.send_seq = self.send_seq.wrapping_add(1);
+
+        let mut wire_buf = [0u8; 64];
+        let hdr_len = header.write_to(&mut wire_buf)?;
+
+        let mut idx = hdr_len;
+        wire_buf[idx] = 10; // 10 = move interior item
+        idx += 1;
+        wire_buf[idx..idx + 4].copy_from_slice(&cell_id.to_be_bytes());
+        idx += 4;
+        wire_buf[idx..idx + 4].copy_from_slice(&item_instance_id.to_be_bytes());
+        idx += 4;
+        wire_buf[idx..idx + 4].copy_from_slice(&local_x.to_be_bytes());
+        idx += 4;
+        wire_buf[idx..idx + 4].copy_from_slice(&local_y.to_be_bytes());
+        idx += 4;
+        wire_buf[idx..idx + 4].copy_from_slice(&local_z.to_be_bytes());
+        idx += 4;
+        wire_buf[idx..idx + 4].copy_from_slice(&yaw_degrees.to_be_bytes());
+        idx += 4;
+
+        self.socket
+            .send_to(&wire_buf[..idx], self.config.server_addr)?;
+        Ok(())
+    }
+
     /// Extrapolates an entity's transform to current render frame given delta time in seconds.
     pub fn extrapolate_entity(&self, entity_id: u32, delta_time: f32) -> Option<ClientTransform> {
         self.world_view.extrapolate_entity(entity_id, delta_time)

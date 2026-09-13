@@ -46,6 +46,11 @@ extern "C" {
 #define EIDOLON_EVENT_EQUIPMENT_CHANGED 12
 #define EIDOLON_EVENT_PARTY_UPDATED  13
 #define EIDOLON_EVENT_TIME_DILATION_CHANGED 14
+#define EIDOLON_EVENT_STRUCTURE_PLACED 15
+#define EIDOLON_EVENT_STRUCTURE_DESTROYED 16
+#define EIDOLON_EVENT_INTERIOR_ENTERED 17
+#define EIDOLON_EVENT_INTERIOR_EXITED 18
+#define EIDOLON_EVENT_INTERIOR_ITEM_UPDATED 19
 
 /* ========================================================================= */
 /* Density Profiles                                                          */
@@ -86,6 +91,38 @@ typedef struct EidolonEvent {
     uint64_t param1;
     uint64_t param2;
 } EidolonEvent;
+
+/**
+ * Standard continuous structure piece representation for game engines.
+ */
+typedef struct EidolonStructurePiece {
+    uint32_t piece_id;
+    uint32_t parent_piece_id;
+    uint8_t piece_type;
+    uint8_t material;
+    uint8_t socket;
+    uint8_t stability;
+    float x;
+    float y;
+    float z;
+    float yaw_degrees;
+    uint32_t health;
+    uint32_t max_health;
+} EidolonStructurePiece;
+
+/**
+ * Standard continuous interior item representation for game engines.
+ */
+typedef struct EidolonInteriorItem {
+    uint32_t item_instance_id;
+    uint32_t item_type_id;
+    float local_x;
+    float local_y;
+    float local_z;
+    float local_yaw_degrees;
+    uint8_t flags;
+    uint8_t _padding[3];
+} EidolonInteriorItem;
 
 /**
  * Opaque handle representing an active EidolonClient instance.
@@ -333,6 +370,80 @@ float eidolon_client_get_time_dilation(EidolonClientHandle* handle);
 int32_t eidolon_client_set_time_dilation(
     EidolonClientHandle* handle,
     float time_dilation
+);
+
+/**
+ * Dispatches a building placement request (modular prefab or freeform piece).
+ *
+ * @param handle Valid client handle.
+ * @param prefab_type_id Prefab catalog identifier.
+ * @param x World coordinate X in meters.
+ * @param y World coordinate Y (elevation) in meters.
+ * @param z World coordinate Z in meters.
+ * @param yaw_degrees Facing heading in degrees.
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_place_structure(
+    EidolonClientHandle* handle,
+    uint32_t prefab_type_id,
+    float x,
+    float y,
+    float z,
+    float yaw_degrees
+);
+
+/**
+ * Dispatches a structure demolition request.
+ *
+ * @param handle Valid client handle.
+ * @param structure_id Structure identifier to demolish.
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_destroy_structure(
+    EidolonClientHandle* handle,
+    uint32_t structure_id
+);
+
+/**
+ * Dispatches an interior cell entry request.
+ *
+ * @param handle Valid client handle.
+ * @param cell_id Interior pocket-dimension cell identifier.
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_enter_interior_cell(
+    EidolonClientHandle* handle,
+    uint32_t cell_id
+);
+
+/**
+ * Dispatches an interior cell exit request back to open-world space.
+ *
+ * @param handle Valid client handle.
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_exit_interior_cell(EidolonClientHandle* handle);
+
+/**
+ * Dispatches a decorative interior item move or placement command.
+ *
+ * @param handle Valid client handle.
+ * @param cell_id Interior cell identifier.
+ * @param item_instance_id Unique item instance identifier.
+ * @param local_x Cell-local coordinate X in meters.
+ * @param local_y Cell-local coordinate Y (elevation) in meters.
+ * @param local_z Cell-local coordinate Z in meters.
+ * @param yaw_degrees Cell-local facing heading in degrees.
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_move_interior_item(
+    EidolonClientHandle* handle,
+    uint32_t cell_id,
+    uint32_t item_instance_id,
+    float local_x,
+    float local_y,
+    float local_z,
+    float yaw_degrees
 );
 
 #ifdef __cplusplus

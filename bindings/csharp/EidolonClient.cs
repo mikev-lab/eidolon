@@ -42,6 +42,44 @@ namespace Eidolon
     }
 
     /// <summary>
+    /// Continuous structure piece representation.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct EidolonStructurePiece
+    {
+        public uint PieceId;
+        public uint ParentPieceId;
+        public byte PieceType;
+        public byte Material;
+        public byte Socket;
+        public byte Stability;
+        public float X;
+        public float Y;
+        public float Z;
+        public float YawDegrees;
+        public uint Health;
+        public uint MaxHealth;
+    }
+
+    /// <summary>
+    /// Continuous interior item representation.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct EidolonInteriorItem
+    {
+        public uint ItemInstanceId;
+        public uint ItemTypeId;
+        public float LocalX;
+        public float LocalY;
+        public float LocalZ;
+        public float LocalYawDegrees;
+        public byte Flags;
+        private byte _pad0;
+        private byte _pad1;
+        private byte _pad2;
+    }
+
+    /// <summary>
     /// Egress bandwidth density profiles.
     /// </summary>
     public static class EidolonDensityProfile
@@ -172,6 +210,36 @@ namespace Eidolon
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         private static extern int eidolon_client_set_time_dilation(IntPtr handle, float timeDilation);
 
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int eidolon_client_place_structure(
+            IntPtr handle,
+            uint prefabTypeId,
+            float x,
+            float y,
+            float z,
+            float yawDegrees
+        );
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int eidolon_client_destroy_structure(IntPtr handle, uint structureId);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int eidolon_client_enter_interior_cell(IntPtr handle, uint cellId);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int eidolon_client_exit_interior_cell(IntPtr handle);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int eidolon_client_move_interior_item(
+            IntPtr handle,
+            uint cellId,
+            uint itemInstanceId,
+            float localX,
+            float localY,
+            float localZ,
+            float yawDegrees
+        );
+
         private IntPtr _handle;
         private readonly NativeEventCallback _callbackDelegate;
         private bool _disposed;
@@ -191,6 +259,11 @@ namespace Eidolon
         public event Action<uint, byte, uint> OnEquipmentChanged;
         public event Action<ulong, ulong, byte> OnPartyUpdated;
         public event Action<float> OnTimeDilationChanged;
+        public event Action<uint, uint, float, float, float, float> OnStructurePlaced;
+        public event Action<uint, uint> OnStructureDestroyed;
+        public event Action<uint> OnInteriorEntered;
+        public event Action<uint> OnInteriorExited;
+        public event Action<uint, uint, float, float, float, float> OnInteriorItemUpdated;
 
         public bool IsConnected => _handle != IntPtr.Zero && eidolon_client_is_connected(_handle) == 1;
 
@@ -289,6 +362,36 @@ namespace Eidolon
             return eidolon_client_party_command(_handle, cmd, targetAccount) == 0;
         }
 
+        public bool PlaceStructure(uint prefabTypeId, float x, float y, float z, float yawDegrees)
+        {
+            ThrowIfDisposed();
+            return eidolon_client_place_structure(_handle, prefabTypeId, x, y, z, yawDegrees) == 0;
+        }
+
+        public bool DestroyStructure(uint structureId)
+        {
+            ThrowIfDisposed();
+            return eidolon_client_destroy_structure(_handle, structureId) == 0;
+        }
+
+        public bool EnterInteriorCell(uint cellId)
+        {
+            ThrowIfDisposed();
+            return eidolon_client_enter_interior_cell(_handle, cellId) == 0;
+        }
+
+        public bool ExitInteriorCell()
+        {
+            ThrowIfDisposed();
+            return eidolon_client_exit_interior_cell(_handle) == 0;
+        }
+
+        public bool MoveInteriorItem(uint cellId, uint itemInstanceId, float localX, float localY, float localZ, float yawDegrees)
+        {
+            ThrowIfDisposed();
+            return eidolon_client_move_interior_item(_handle, cellId, itemInstanceId, localX, localY, localZ, yawDegrees) == 0;
+        }
+
         public bool TryExtrapolateEntity(uint entityId, float deltaTime, out EidolonTransform transform)
         {
             ThrowIfDisposed();
@@ -364,6 +467,21 @@ namespace Eidolon
                 case 14: // TimeDilationChanged
                     float timeDilation = (float)(evt.Param1 / 4294967296.0);
                     OnTimeDilationChanged?.Invoke(timeDilation);
+                    break;
+                case 15: // StructurePlaced
+                    OnStructurePlaced?.Invoke(evt.EntityId, (uint)evt.Param1, evt.X, evt.Y, evt.Z, evt.YawDegrees);
+                    break;
+                case 16: // StructureDestroyed
+                    OnStructureDestroyed?.Invoke(evt.EntityId, (uint)evt.Param1);
+                    break;
+                case 17: // InteriorEntered
+                    OnInteriorEntered?.Invoke((uint)evt.Param1);
+                    break;
+                case 18: // InteriorExited
+                    OnInteriorExited?.Invoke((uint)evt.Param1);
+                    break;
+                case 19: // InteriorItemUpdated
+                    OnInteriorItemUpdated?.Invoke((uint)evt.Param1, (uint)evt.Param2, evt.X, evt.Y, evt.Z, evt.YawDegrees);
                     break;
             }
         }

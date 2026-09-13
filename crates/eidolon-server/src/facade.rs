@@ -12,6 +12,7 @@ use eidolon_core::geom::SpatialGeometry;
 use eidolon_core::item::EquipmentSlot;
 use eidolon_core::kinematics::{extrapolate, KinematicState};
 use eidolon_core::quant::{QuantizedCellCoord, QuantizedYaw};
+use eidolon_core::structure::{InteriorItemRecord, MaterialType, PieceType, SnapSocket};
 use eidolon_net::auth::{
     compute_auth_cookie, ConnectChallengeRequest, ConnectChallengeResponse, ConnectFinalizeRequest,
     ConnectFinalizeResponse, CHALLENGE_REQ_LEN, FINALIZE_REQ_LEN, NONCE_LEN,
@@ -20,12 +21,16 @@ use eidolon_net::error::NetError;
 use eidolon_net::governor::{BandwidthGovernor, DensityProfile};
 use eidolon_net::packet::PacketHeader;
 use eidolon_net::protocol::{ChannelType, PacketType, HEADER_SIZE, MAX_PACKET_SIZE};
+use eidolon_spatial::bvh::RayHit;
 use eidolon_spatial::tier::FrequencyTier;
 use eidolon_spatial::SpatialHashGrid;
 use eidolon_world::ability::{get_ability_definition, AbilityShape, CastState, CooldownTracker};
+use eidolon_world::building::StructureManager;
 use eidolon_world::chat::{ChatChannel, ChatRateLimiter};
+use eidolon_world::chunk_manifest::ChunkManifestManager;
 use eidolon_world::durable_journal::DurableFileJournal;
 use eidolon_world::equipment::EquipmentContainer;
+use eidolon_world::interior::InteriorCellManager;
 use eidolon_world::party::{PartyManager, PartyMember};
 use eidolon_world::transaction::TransactionManager;
 use eidolon_world::wal::WalRecord;
@@ -201,6 +206,9 @@ impl EidolonAppBuilder {
             density_profile: self.density_profile,
             bandwidth_governor,
             time_dilation: Fixed64::ONE,
+            structure_manager: StructureManager::new(),
+            interior_manager: InteriorCellManager::new(),
+            chunk_manifest_manager: ChunkManifestManager::new(),
         })
     }
 }
@@ -227,6 +235,9 @@ pub struct EidolonApp {
     density_profile: DensityProfile,
     bandwidth_governor: BandwidthGovernor,
     time_dilation: Fixed64,
+    structure_manager: StructureManager,
+    interior_manager: InteriorCellManager,
+    chunk_manifest_manager: ChunkManifestManager,
 }
 
 impl EidolonApp {
@@ -253,6 +264,195 @@ impl EidolonApp {
     /// Returns a mutable reference to the party manager.
     pub fn party_manager_mut(&mut self) -> &mut PartyManager {
         &mut self.party_manager
+    }
+
+    /// Returns a reference to the player structure manager.
+    pub fn structure_manager(&self) -> &StructureManager {
+        &self.structure_manager
+    }
+
+    /// Returns a mutable reference to the player structure manager.
+    pub fn structure_manager_mut(&mut self) -> &mut StructureManager {
+        &mut self.structure_manager
+    }
+
+    /// Returns a reference to the interior cell manager.
+    pub fn interior_manager(&self) -> &InteriorCellManager {
+        &self.interior_manager
+    }
+
+    /// Returns a mutable reference to the interior cell manager.
+    pub fn interior_manager_mut(&mut self) -> &mut InteriorCellManager {
+        &mut self.interior_manager
+    }
+
+    /// Returns a reference to the chunk manifest manager.
+    pub fn chunk_manifest_manager(&self) -> &ChunkManifestManager {
+        &self.chunk_manifest_manager
+    }
+
+    /// Returns a mutable reference to the chunk manifest manager.
+    pub fn chunk_manifest_manager_mut(&mut self) -> &mut ChunkManifestManager {
+        &mut self.chunk_manifest_manager
+    }
+
+    /// Places a modular prefab structure (e.g. SWG house, harvester) in the world.
+    pub fn place_modular_prefab(
+        &mut self,
+        owner_account_id: u64,
+        prefab_type_id: u32,
+        position: Vec3Fix,
+        yaw: QuantizedYaw,
+        interior_cell_id: Option<u32>,
+    ) -> Result<u32, AppError> {
+        let structure_id = self.structure_manager.create_prefab(
+            owner_account_id,
+            prefab_type_id,
+            position,
+            yaw,
+            interior_cell_id,
+        )?;
+
+        self.chunk_manifest_manager
+            .register_structure(structure_id, position);
+
+        Ok(structure_id)
+    }
+
+    /// Places a new grounded foundation establishing a freeform construction group.
+    pub fn place_foundation(
+        &mut self,
+        owner_account_id: u64,
+        position: Vec3Fix,
+        yaw: QuantizedYaw,
+        material: MaterialType,
+    ) -> Result<(u32, u32), AppError> {
+        let (structure_id, piece_id) =
+            self.structure_manager
+                .place_foundation(owner_account_id, position, yaw, material)?;
+
+        self.chunk_manifest_manager
+            .register_structure(structure_id, position);
+
+        Ok((structure_id, piece_id))
+    }
+
+    /// Snaps and places a child building piece onto an existing parent piece.
+    pub fn snap_piece(
+        &mut self,
+        structure_id: u32,
+        parent_piece_id: u32,
+        piece_type: PieceType,
+        material: MaterialType,
+        socket: SnapSocket,
+        variant_flags: u8,
+    ) -> Result<u32, AppError> {
+        let piece_id = self.structure_manager.place_piece(
+            structure_id,
+            parent_piece_id,
+            piece_type,
+            material,
+            socket,
+            variant_flags,
+        )?;
+
+        if let Some(structure) = self.structure_manager.get_structure(structure_id) {
+            self.chunk_manifest_manager
+                .mark_chunk_modified(structure.world_position);
+        }
+
+        Ok(piece_id)
+    }
+
+    /// Destroys a building piece and triggers cascading collapse of ungrounded pieces.
+    pub fn destroy_piece(
+        &mut self,
+        structure_id: u32,
+        piece_id: u32,
+    ) -> Result<Vec<u32>, AppError> {
+        let collapsed = self
+            .structure_manager
+            .destroy_piece(structure_id, piece_id)?;
+
+        if let Some(structure) = self.structure_manager.get_structure(structure_id) {
+            self.chunk_manifest_manager
+                .mark_chunk_modified(structure.world_position);
+        }
+
+        Ok(collapsed)
+    }
+
+    /// Demolishes a player structure completely and updates spatial chunk manifests.
+    pub fn destroy_structure(&mut self, structure_id: u32) -> Result<(), AppError> {
+        if let Some(structure) = self.structure_manager.get_structure(structure_id) {
+            let _ = self
+                .chunk_manifest_manager
+                .unregister_structure(structure_id, structure.world_position);
+        }
+        self.structure_manager.destroy_structure(structure_id)?;
+        Ok(())
+    }
+
+    /// Performs a raycast against all active player structures in the world.
+    pub fn raycast_structures(
+        &self,
+        origin: Vec3Fix,
+        dir: Vec3Fix,
+        max_distance: Fixed64,
+    ) -> Option<RayHit> {
+        self.structure_manager.raycast(origin, dir, max_distance)
+    }
+
+    /// Transitions an entity into an interior cell pocket dimension.
+    pub fn enter_interior_cell(&mut self, entity_id: u32, cell_id: u32) -> Result<(), AppError> {
+        self.interior_manager.enter_cell(entity_id, cell_id)?;
+        Ok(())
+    }
+
+    /// Transitions an entity out of an interior cell pocket dimension back to open-world space.
+    pub fn exit_interior_cell(&mut self, entity_id: u32) -> Result<u32, AppError> {
+        let cell_id = self.interior_manager.exit_cell(entity_id)?;
+        Ok(cell_id)
+    }
+
+    /// Adds a customized decorative item to an interior cell.
+    pub fn place_interior_item(
+        &mut self,
+        cell_id: u32,
+        record: InteriorItemRecord,
+    ) -> Result<(), AppError> {
+        self.interior_manager.place_item(cell_id, record)?;
+        Ok(())
+    }
+
+    /// Removes a decorative item from an interior cell.
+    pub fn remove_interior_item(
+        &mut self,
+        cell_id: u32,
+        item_instance_id: u32,
+    ) -> Result<InteriorItemRecord, AppError> {
+        let rec = self
+            .interior_manager
+            .remove_item(cell_id, item_instance_id)?;
+        Ok(rec)
+    }
+
+    /// Serializes an interior scene manifest for an entity entering a building.
+    pub fn build_interior_scene_manifest(
+        &self,
+        cell_id: u32,
+        out_buffer: &mut [u8],
+    ) -> Result<usize, AppError> {
+        let bytes = self
+            .interior_manager
+            .build_scene_manifest(cell_id, out_buffer)?;
+        Ok(bytes)
+    }
+
+    /// Runs decoupled background maintenance decay on player structures.
+    pub fn run_structure_maintenance(&mut self, decay_amount: u32) -> usize {
+        self.structure_manager
+            .run_maintenance_cycle(self.current_tick, decay_amount)
     }
 
     /// Configures the active network density profile and updates the bandwidth governor.
@@ -1251,6 +1451,15 @@ impl EidolonApp {
                 let mut p_idx = hdr_len;
 
                 for &visible_id in &query_buf[..query_res.written] {
+                    // Check interior cell pocket-dimension isolation:
+                    // Entities inside an interior room are completely invisible to outside players,
+                    // and players inside a room only see occupants of the exact same room.
+                    let player_cell = self.interior_manager.get_entity_cell(player_id);
+                    let target_cell = self.interior_manager.get_entity_cell(visible_id);
+                    if player_cell != target_cell {
+                        continue;
+                    }
+
                     if let Some(target) = self.entities.get(&visible_id) {
                         let dist_sq = pos.distance_squared(target.position);
                         let tier = FrequencyTier::classify_5tier(dist_sq);

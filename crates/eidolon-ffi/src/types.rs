@@ -79,6 +79,16 @@ pub const EIDOLON_EVENT_EQUIPMENT_CHANGED: u32 = 12;
 pub const EIDOLON_EVENT_PARTY_UPDATED: u32 = 13;
 /// Event type constant: Time dilation (TiDi) factor changed by server (param1 = fixed-point Q32.32 factor).
 pub const EIDOLON_EVENT_TIME_DILATION_CHANGED: u32 = 14;
+/// Event type constant: Player structure placed or piece snapped.
+pub const EIDOLON_EVENT_STRUCTURE_PLACED: u32 = 15;
+/// Event type constant: Player structure or piece destroyed / collapsed.
+pub const EIDOLON_EVENT_STRUCTURE_DESTROYED: u32 = 16;
+/// Event type constant: Local player entered an interior cell pocket dimension.
+pub const EIDOLON_EVENT_INTERIOR_ENTERED: u32 = 17;
+/// Event type constant: Local player exited an interior cell back to open-world space.
+pub const EIDOLON_EVENT_INTERIOR_EXITED: u32 = 18;
+/// Event type constant: Decorative interior item placed or modified.
+pub const EIDOLON_EVENT_INTERIOR_ITEM_UPDATED: u32 = 19;
 
 /// Density profile constant: Ultra-low bandwidth mobile / constrained network (1.2 KB/s budget).
 pub const EIDOLON_DENSITY_BUDGET_MOBILE: u32 = 0;
@@ -86,3 +96,55 @@ pub const EIDOLON_DENSITY_BUDGET_MOBILE: u32 = 0;
 pub const EIDOLON_DENSITY_STANDARD_MMO: u32 = 1;
 /// Density profile constant: Massive fleet battle or siege mode (4.5 KB/s budget).
 pub const EIDOLON_DENSITY_MASSIVE_FLEET_OR_SIEGE: u32 = 2;
+
+/// Standard C-compatible structure piece representation for cross-language game engines.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[repr(C)]
+pub struct EidolonStructurePiece {
+    /// Authoritative piece identifier.
+    pub piece_id: u32,
+    /// Parent piece identifier this piece is snapped to (0 if foundation).
+    pub parent_piece_id: u32,
+    /// Piece classification (0 = Foundation, 1 = Wall, 2 = Floor, 3 = Roof, 4 = Pillar, 5 = Door).
+    pub piece_type: u8,
+    /// Material tier (0 = Wood, 1 = Stone, 2 = Reinforced, 3 = Metal).
+    pub material: u8,
+    /// Snapped socket identifier.
+    pub socket: u8,
+    /// Structural load-bearing stability score (0..100).
+    pub stability: u8,
+    /// World position X in meters.
+    pub x: f32,
+    /// World position Y (elevation) in meters.
+    pub y: f32,
+    /// World position Z in meters.
+    pub z: f32,
+    /// Facing heading discrete angle in degrees.
+    pub yaw_degrees: f32,
+    /// Current durability hit points.
+    pub health: u32,
+    /// Maximum durability hit points.
+    pub max_health: u32,
+}
+
+/// Standard C-compatible decorative interior item representation for cross-language game engines.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[repr(C)]
+pub struct EidolonInteriorItem {
+    /// Unique item instance identifier within the interior cell.
+    pub item_instance_id: u32,
+    /// Catalog template identifier.
+    pub item_type_id: u32,
+    /// Cell-local coordinate X in meters.
+    pub local_x: f32,
+    /// Cell-local coordinate Y (elevation) in meters.
+    pub local_y: f32,
+    /// Cell-local coordinate Z in meters.
+    pub local_z: f32,
+    /// Cell-local facing heading in degrees.
+    pub local_yaw_degrees: f32,
+    /// Placement and interaction flags.
+    pub flags: u8,
+    /// Memory alignment padding.
+    pub _padding: [u8; 3],
+}

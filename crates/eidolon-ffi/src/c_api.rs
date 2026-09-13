@@ -806,3 +806,151 @@ pub extern "C" fn eidolon_client_set_time_dilation(
 
     result.unwrap_or(EIDOLON_ERR_PANIC)
 }
+
+/// Dispatches a building placement request (modular prefab or freeform piece).
+#[no_mangle]
+pub extern "C" fn eidolon_client_place_structure(
+    handle: *mut EidolonClientHandle,
+    prefab_type_id: u32,
+    x: f32,
+    y: f32,
+    z: f32,
+    yaw_degrees: f32,
+) -> i32 {
+    if handle.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` was verified non-null above.
+        let handle_ref = unsafe { &mut *handle };
+        let client = match handle_ref.client.as_mut() {
+            Some(c) => c,
+            None => return EIDOLON_ERR_NOT_CONNECTED,
+        };
+
+        match client.place_structure(prefab_type_id, x, y, z, yaw_degrees) {
+            Ok(_) => EIDOLON_OK,
+            Err(_) => EIDOLON_ERR_NETWORK,
+        }
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
+}
+
+/// Dispatches a structure demolition request.
+#[no_mangle]
+pub extern "C" fn eidolon_client_destroy_structure(
+    handle: *mut EidolonClientHandle,
+    structure_id: u32,
+) -> i32 {
+    if handle.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` was verified non-null above.
+        let handle_ref = unsafe { &mut *handle };
+        let client = match handle_ref.client.as_mut() {
+            Some(c) => c,
+            None => return EIDOLON_ERR_NOT_CONNECTED,
+        };
+
+        match client.destroy_structure(structure_id) {
+            Ok(_) => EIDOLON_OK,
+            Err(_) => EIDOLON_ERR_NETWORK,
+        }
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
+}
+
+/// Dispatches an interior cell entry request.
+#[no_mangle]
+pub extern "C" fn eidolon_client_enter_interior_cell(
+    handle: *mut EidolonClientHandle,
+    cell_id: u32,
+) -> i32 {
+    if handle.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` was verified non-null above.
+        let handle_ref = unsafe { &mut *handle };
+        let client = match handle_ref.client.as_mut() {
+            Some(c) => c,
+            None => return EIDOLON_ERR_NOT_CONNECTED,
+        };
+
+        match client.enter_interior_cell(cell_id) {
+            Ok(_) => EIDOLON_OK,
+            Err(_) => EIDOLON_ERR_NETWORK,
+        }
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
+}
+
+/// Dispatches an interior cell exit request back to the open world.
+#[no_mangle]
+pub extern "C" fn eidolon_client_exit_interior_cell(handle: *mut EidolonClientHandle) -> i32 {
+    if handle.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` was verified non-null above.
+        let handle_ref = unsafe { &mut *handle };
+        let client = match handle_ref.client.as_mut() {
+            Some(c) => c,
+            None => return EIDOLON_ERR_NOT_CONNECTED,
+        };
+
+        match client.exit_interior_cell() {
+            Ok(_) => EIDOLON_OK,
+            Err(_) => EIDOLON_ERR_NETWORK,
+        }
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
+}
+
+/// Dispatches a decorative interior item move or placement command.
+#[no_mangle]
+pub extern "C" fn eidolon_client_move_interior_item(
+    handle: *mut EidolonClientHandle,
+    cell_id: u32,
+    item_instance_id: u32,
+    local_x: f32,
+    local_y: f32,
+    local_z: f32,
+    yaw_degrees: f32,
+) -> i32 {
+    if handle.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` was verified non-null above.
+        let handle_ref = unsafe { &mut *handle };
+        let client = match handle_ref.client.as_mut() {
+            Some(c) => c,
+            None => return EIDOLON_ERR_NOT_CONNECTED,
+        };
+
+        match client.move_interior_item(
+            cell_id,
+            item_instance_id,
+            local_x,
+            local_y,
+            local_z,
+            yaw_degrees,
+        ) {
+            Ok(_) => EIDOLON_OK,
+            Err(_) => EIDOLON_ERR_NETWORK,
+        }
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
+}

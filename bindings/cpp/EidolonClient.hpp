@@ -196,6 +196,41 @@ public:
     }
 
     /**
+     * Dispatches a building placement request (modular prefab or freeform piece).
+     */
+    bool place_structure(uint32_t prefab_type_id, float x, float y, float z, float yaw_degrees) {
+        return eidolon_client_place_structure(m_handle.get(), prefab_type_id, x, y, z, yaw_degrees) == EIDOLON_OK;
+    }
+
+    /**
+     * Dispatches a structure demolition request.
+     */
+    bool destroy_structure(uint32_t structure_id) {
+        return eidolon_client_destroy_structure(m_handle.get(), structure_id) == EIDOLON_OK;
+    }
+
+    /**
+     * Dispatches an interior cell entry request.
+     */
+    bool enter_interior_cell(uint32_t cell_id) {
+        return eidolon_client_enter_interior_cell(m_handle.get(), cell_id) == EIDOLON_OK;
+    }
+
+    /**
+     * Dispatches an interior cell exit request back to open-world space.
+     */
+    bool exit_interior_cell() {
+        return eidolon_client_exit_interior_cell(m_handle.get()) == EIDOLON_OK;
+    }
+
+    /**
+     * Dispatches a decorative interior item move or placement command.
+     */
+    bool move_interior_item(uint32_t cell_id, uint32_t item_instance_id, float local_x, float local_y, float local_z, float yaw_degrees) {
+        return eidolon_client_move_interior_item(m_handle.get(), cell_id, item_instance_id, local_x, local_y, local_z, yaw_degrees) == EIDOLON_OK;
+    }
+
+    /**
      * Returns the raw unmanaged handle for custom extensions.
      */
     EidolonClientHandle* raw_handle() const {
