@@ -69,6 +69,54 @@ impl NetworkIoWorker {
         enqueued_count
     }
 
+    /// Drains incoming datagrams from the UDP socket into the ingress queue, enforcing per-socket rate quotas.
+    ///
+    /// Evaluates rate limits using `SocketRatePolicer`. Datagrams exceeding rate quotas are dropped
+    /// immediately before allocating space in the ingress queue.
+    /// Returns `(enqueued_count, dropped_count)`.
+    pub fn drain_ingress_policed<const CAP: usize>(
+        &self,
+        ingress_queue: &SpscPacketQueue<CAP>,
+        policer: &mut eidolon_net::SocketRatePolicer,
+        current_tick: u64,
+        max_packets: usize,
+    ) -> (usize, usize) {
+        let mut buffer = [0u8; MAX_PACKET_SIZE];
+        let mut enqueued_count = 0;
+        let mut dropped_count = 0;
+
+        for _ in 0..max_packets {
+            match self.socket.recv_from(&mut buffer) {
+                Ok((len, peer_addr)) => {
+                    if policer.check_ingress(len, current_tick).is_err() {
+                        dropped_count += 1;
+                        continue;
+                    }
+
+                    if let Some(packet) = NetworkPacket::new(peer_addr, &buffer[..len]) {
+                        if ingress_queue.try_push(packet) {
+                            enqueued_count += 1;
+                        } else {
+                            // Queue saturated: drop packet under backpressure
+                            dropped_count += 1;
+                            break;
+                        }
+                    }
+                }
+                Err(ref e)
+                    if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut =>
+                {
+                    break;
+                }
+                Err(_) => {
+                    break;
+                }
+            }
+        }
+
+        (enqueued_count, dropped_count)
+    }
+
     /// Drains outgoing datagrams from the egress queue and transmits them over UDP.
     ///
     /// Sends up to `max_packets` datagrams per call. Returns the number of packets dispatched.

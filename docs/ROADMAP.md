@@ -21,7 +21,7 @@ The roadmap is structured into two eras:
 │ Phase       │ Subsystem Focus                                   │ Priority    │
 ├─────────────┼───────────────────────────────────────────────────┼─────────────┤
 │ Phase 1-7   │ Core Simulation, Quantization, Transport & AoI    │ COMPLETED   │
-│ Phase 8     │ Distributed Authority, Session Security & Quotas  │ P0 Critical │
+│ Phase 8     │ Distributed Authority, Session Security & Quotas  │ COMPLETED   │
 │ Phase 9     │ Authoritative Persistence & Crash Reconstruction  │ P0 Critical │
 │ Phase 10    │ End-to-End Backpressure & Capacity Admission      │ P1 Launch   │
 │ Phase 11    │ Production Observability & Distributed Tracing    │ P1 Launch   │
@@ -76,35 +76,35 @@ Following strict distributed systems engineering discipline, deliverables are ca
 
 ---
 
-### Phase 8: Distributed Authority, Session Security & Malicious-Client Resistance (P0)
+### Phase 8: Distributed Authority, Session Security & Malicious-Client Resistance (P0 - Completed & Verified)
 
 *Objective: Establish uncompromised cryptographic session binding, deterministic authority epochs, partition fencing, and per-connection resource limits to guarantee that malicious clients cannot destabilize legitimate gameplay.*
 
-- **Milestone 8.1: Cryptographic Session Handshake & Replay Protection**
-  - Ephemeral session keys negotiated via HMAC-SHA256 challenge-response during UDP association.
-  - Circular 64-bit monotonic sequence replay window: reject duplicate or stale packets outside the valid replay horizon.
-  - Credential and session token expiration with cryptographic nonce binding to prevent session hijacking.
-- **Milestone 8.2: Malicious-Client Resource Fencing & Anti-DoS Quotas**
-  - Hard per-connection ingress rate limits: maximum 40 packets/sec and 32 KB/sec per client socket before immediate drop.
-  - Entity allocation quotas: strict limits on entity spawning, interaction rate, and inventory mutations.
-  - Memory isolation: hard ceiling of 64 KB memory allocation per active connection.
-  - CPU budget enforcement: untrusted bitstream parsing bounded to <5 microseconds per packet. Guaranteed invariant: no single malicious client can consume more than 0.01% of a tick budget.
-- **Milestone 8.3: Deterministic Authority Epochs & Reconnect Fencing**
-  - Four-part authority tuple: `[account_id, session_id, authority_epoch, sequence_number]`.
-  - Stale session rejection: server nodes unconditionally reject packets with `epoch < current_epoch`.
-  - Reconnect fencing: when a client reconnects to Server B after Server A failure, increment `authority_epoch`. Any delayed packets arriving at Server A or B from older epochs are dropped immediately.
-- **Milestone 8.4: Multi-Node Zone Partition Semantics & Split-Brain Prevention**
-  - Explicit distributed partition handling for severed inter-zone links (`Zone A <-> Zone B`).
-  - Lease-based spatial boundary ownership: zone servers maintain renewable short-term leases on boundary entities.
-  - Network split resolution: if partition lasts >3 heartbeats, boundary entities transition to read-only frozen state; migration transactions automatically roll back to the authoritative home zone.
-  - Zero duplicate entities: guaranteed single-writer invariant across cluster boundaries.
-- **Milestone 8.5: Wire Protocol Versioning & Rolling Compatibility**
-  - Implement runtime protocol negotiation in packet headers (`MAGIC = 0x4549`, `PROTOCOL_VERSION = 1`).
-  - Automated compatibility test matrix:
+- [x] **Milestone 8.1: Cryptographic Session Handshake & Replay Protection**
+  - [x] Ephemeral session keys negotiated via native HMAC-SHA256 challenge-response during UDP association.
+  - [x] Circular 64-bit monotonic sequence replay window: reject duplicate or stale packets outside the valid replay horizon.
+  - [x] Session nonce rotation and time-to-live (TTL) expiration guards.
+- [x] **Milestone 8.2: Malicious-Client Resource Fencing & Anti-DoS Quotas**
+  - [x] Hard per-connection ingress rate limits: maximum 40 packets/sec and 32 KB/sec per client socket before immediate drop.
+  - [x] Entity allocation quotas: strict limits on entity spawning, interaction rate, and inventory mutations.
+  - [x] Memory isolation: hard ceiling of 64 KB memory allocation per active connection.
+  - [x] CPU budget enforcement: untrusted bitstream parsing bounded to <5 microseconds per packet. Guaranteed invariant: no single malicious client can consume more than 0.01% of a tick budget.
+- [x] **Milestone 8.3: Deterministic Authority Epochs & Reconnect Fencing**
+  - [x] Four-part authority tuple: `[account_id, session_id, authority_epoch, sequence_number]`.
+  - [x] Stale session rejection: server nodes unconditionally reject packets with `epoch < current_epoch`.
+  - [x] Reconnect fencing: when a client reconnects to Server B after Server A failure, increment `authority_epoch`. Any delayed packets arriving at Server A or B from older epochs are dropped immediately.
+- [x] **Milestone 8.4: Multi-Node Zone Partition Semantics & Split-Brain Prevention**
+  - [x] Explicit distributed partition handling for severed inter-zone links (`Zone A <-> Zone B`).
+  - [x] Lease-based spatial boundary ownership: zone servers maintain renewable short-term leases on boundary entities.
+  - [x] Network split resolution: if partition lasts >3 heartbeats, boundary entities transition to read-only frozen state; migration transactions automatically roll back to the authoritative home zone.
+  - [x] Zero duplicate entities: guaranteed single-writer invariant across cluster boundaries.
+- [x] **Milestone 8.5: Wire Protocol Versioning & Rolling Compatibility**
+  - [x] Implement runtime protocol negotiation in packet headers (`MAGIC = 0x4549`, `PROTOCOL_VERSION = 1`).
+  - [x] Automated compatibility test matrix:
     * Client v1 <-> Server v1 (Standard baseline).
     * Client v1 <-> Server v2 (Backward-compatible deprecation).
     * Client v2 <-> Server v1 (Graceful feature degradation or typed upgrade requirement).
-  - Mixed-cluster wire translation during rolling deployments without disconnecting active players.
+  - [x] Mixed-cluster wire translation during rolling deployments without disconnecting active players.
 
 ---
 
@@ -263,9 +263,9 @@ To achieve full production sign-off, `eidolon` must satisfy all gates in this sc
 | **Core Simulation** | Completed | Deterministic 20 Hz tick loop | <5ms p99 tick duration (50ms budget) |
 | **Spatial & AoI** | Completed | Flash mob saturation query | <10µs for 500-entity cluster |
 | **Wire Egress** | Completed | L3/L4 Wire footprint | <1.2 KB/s average per client |
-| **Session Security** | P0 | Cryptographic handshake & replay | 0 unauthenticated packets processed |
-| **Anti-DoS Fencing** | P0 | Malicious client rate/memory bounds | <0.01% tick CPU per malicious client |
-| **Authority Fencing** | P0 | Stale session & reconnect rejection | 0 stale state overwrites under network split |
+| **Session Security** | Completed | Cryptographic handshake & replay | 0 unauthenticated packets processed |
+| **Anti-DoS Fencing** | Completed | Malicious client rate/memory bounds | <0.01% tick CPU per malicious client |
+| **Authority Fencing** | Completed | Stale session & reconnect rejection | 0 stale state overwrites under network split |
 | **Persistence (WAL)** | P0 | Crash consistency & dupe prevention | 0 lost transactions / 0 duplicated items |
 | **State Reconstruction**| P0 | Disposable node recovery | 100% state restored after SIGKILL |
 | **End-to-End Flow** | P1 | Overload backpressure | 0 unbounded queues; graceful shedding |

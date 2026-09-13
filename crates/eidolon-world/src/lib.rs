@@ -10,6 +10,7 @@ pub mod companion;
 pub mod error;
 pub mod hibernation;
 pub mod instance;
+pub mod partition;
 pub mod zone;
 
 // Re-export primary types for ergonomic crate consumption.
@@ -23,5 +24,9 @@ pub use hibernation::{
 };
 pub use instance::{
     DungeonInstance, DungeonPool, InstanceLifecycle, MAX_PARTY_MEMBERS, ROOM_CLEANUP_TIMEOUT_TICKS,
+};
+pub use partition::{
+    BoundaryLease, EntityPartitionState, ZonePartitionDetector, ZonePartitionManager,
+    DEFAULT_LEASE_DURATION_TICKS, DEFAULT_PARTITION_TIMEOUT_TICKS,
 };
 pub use zone::{MigrationTicket, SeamAxis, WorldManager, WorldZone, ZoneBounds};

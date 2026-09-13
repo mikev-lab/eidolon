@@ -295,7 +295,7 @@ With the core networking, spatial partitioning, dead reckoning, and simulation l
 
 | Phase | Focus Area | Critical Deliverables | Priority |
 | :--- | :--- | :--- | :--- |
-| **Phase 8** | **Distributed Authority & Security** | HMAC session binding, sequence replay windows, anti-DoS quotas, authority epochs under reconnect, split-brain fencing, and protocol versioning. | **P0 Critical** |
+| **Phase 8** | **Distributed Authority & Security** | HMAC session binding, sequence replay windows, anti-DoS quotas, authority epochs under reconnect, split-brain fencing, and protocol versioning. | **COMPLETED** |
 | **Phase 9** | **Authoritative Persistence & Recovery** | Write-ahead journal (WAL), double-spend prevention, 30s DB outage buffering, disposable zone reconstruction after SIGKILL, and cold hydration. | **P0 Critical** |
 | **Phase 10** | **End-to-End Flow & Clock Discipline** | Continuous backpressure pipeline (socket -> ingress -> sim -> AoI -> egress -> socket), priority admission shedding, and monotonic clock time-warp defense. | **P1 Launch** |
 | **Phase 11** | **Observability & Distributed Tracing** | Bounded-cardinality Prometheus metrics, microsecond phase timing, correlated tracing `[session, tick, entity, zone, epoch]`, and SRE runbooks. | **P1 Launch** |
@@ -306,7 +306,7 @@ With the core networking, spatial partitioning, dead reckoning, and simulation l
 
 ---
 
-## Development Status (Core Phases 1-7 Completed)
+## Development Status (Core Phases 1-7 & Phase 8 Completed)
 
 All 7 execution phases of `eidolon` are complete, tested, and verified against the strict governance framework:
 
@@ -371,6 +371,18 @@ All 7 execution phases of `eidolon` are complete, tested, and verified against t
 - [x] 100,000-Tick Sustained Load & Zero Memory Leak Audit (`tests/sustained_load_leak_audit.rs`)
 - [x] Public Technical Documentation Export (`docs/*.md`)
 - [x] All Quality Gates Verified (Zero Warnings, Zero Panics, 100% Tests Passing)
+
+### Phase 8 Progress (Distributed Authority & Session Security)
+- [x] Native Cryptographic Primitives (Zero-Dependency SHA-256 & HMAC-SHA256, FIPS 180-4 / RFC 2104)
+- [x] Ephemeral 3-Way Association Handshake (`ConnectChallenge` / `ConnectFinalize`)
+- [x] 64-Bit Monotonic Sequence Replay Window (`ReplayWindow`)
+- [x] Per-Socket Ingress Rate Policers (40 pps / 32 KB/s Token Buckets)
+- [x] Per-Connection 64 KB Memory Ceiling (`ConnectionMemoryAccountant`)
+- [x] Sub-5µs Bounded Untrusted Bitstream Deserialization CPU Defense
+- [x] Deterministic 4-Part Authority Tuples & Epoch Reconnect Fencing (`AuthorityFencer`)
+- [x] Inter-Zone Boundary Leases, Heartbeat Partition Detectors & Migration Rollback (`ZonePartitionManager`)
+- [x] Wire Protocol Version Negotiation & Mixed-Cluster Rolling Downgrades (`ProtocolNegotiator`)
+- [x] Automated Integration & Chaos Suites (Zero Warnings, 100% Tests Passing)
 
 ---
 

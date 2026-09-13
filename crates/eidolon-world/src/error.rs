@@ -50,6 +50,22 @@ pub enum WorldError {
     InvalidSnapshot(&'static str),
     /// Party slot is full (maximum 4 co-op players per instance).
     PartyFull,
+    /// Inter-zone communication link is severed (network partition declared).
+    PartitionSevered {
+        /// Local zone identifier.
+        local_zone: ZoneId,
+        /// Remote partitioned zone identifier.
+        remote_zone: ZoneId,
+    },
+    /// Entity is frozen in read-only state due to active network partition.
+    BoundaryEntityFrozen(u32),
+    /// Boundary cell lease has expired without renewal.
+    LeaseExpired {
+        /// Expired lease identifier.
+        lease_id: u64,
+        /// Zone holding expired lease.
+        zone_id: ZoneId,
+    },
 }
 
 impl fmt::Display for WorldError {
@@ -70,6 +86,20 @@ impl fmt::Display for WorldError {
             Self::SnapshotCorrupted => write!(f, "Hibernation snapshot data is corrupted"),
             Self::InvalidSnapshot(reason) => write!(f, "Invalid hibernation snapshot: {reason}"),
             Self::PartyFull => write!(f, "Co-op party slot limit reached"),
+            Self::PartitionSevered {
+                local_zone,
+                remote_zone,
+            } => write!(
+                f,
+                "Network partition severed link between {local_zone} and {remote_zone}"
+            ),
+            Self::BoundaryEntityFrozen(id) => write!(
+                f,
+                "Entity {id} is frozen in read-only state due to active partition"
+            ),
+            Self::LeaseExpired { lease_id, zone_id } => {
+                write!(f, "Boundary lease {lease_id} expired for {zone_id}")
+            }
         }
     }
 }

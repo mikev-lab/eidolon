@@ -6,10 +6,12 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod authority;
 pub mod fixed;
 pub mod kinematics;
 pub mod quant;
 
+pub use authority::{AuthorityError, AuthorityFencer, AuthorityToken, AUTHORITY_TOKEN_LEN};
 pub use fixed::{Fixed64, Vec3Fix};
 pub use kinematics::{
     extrapolate, reconcile_smooth, should_dispatch_update, DeadReckoningConfig, KinematicState,

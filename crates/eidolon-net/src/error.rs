@@ -91,6 +91,41 @@ pub enum NetError {
     CorruptedData,
     /// Connection or channel timed out after exceeding maximum retransmissions.
     ConnectionTimedOut,
+    /// Authentication handshake or signature verification failed.
+    AuthenticationFailed,
+    /// Packet replay detected or sequence falls outside the valid replay window.
+    ReplayDetected {
+        /// Sequence number of the replayed packet.
+        sequence: u64,
+        /// Lowest valid sequence accepted in the window.
+        window_bottom: u64,
+    },
+    /// Ingress rate limit exceeded for client socket.
+    RateLimitExceeded {
+        /// Configured packet-per-second limit.
+        pps_limit: u32,
+    },
+    /// Packet stamped with superseded authority epoch.
+    StaleAuthorityEpoch {
+        /// Currently active server authority epoch.
+        current_epoch: u32,
+        /// Epoch provided in packet header.
+        packet_epoch: u32,
+    },
+    /// Incompatible wire protocol version.
+    IncompatibleProtocolVersion {
+        /// Server protocol version.
+        server_version: u16,
+        /// Client protocol version.
+        client_version: u16,
+    },
+    /// Client connection exceeded memory allocation quota.
+    MemoryQuotaExceeded {
+        /// Current bytes tracked.
+        current_bytes: usize,
+        /// Maximum allowable bytes.
+        max_bytes: usize,
+    },
 }
 
 impl fmt::Display for NetError {
@@ -120,6 +155,27 @@ impl fmt::Display for NetError {
             Self::QueueFull => write!(f, "Packet queue is saturated (backpressure limit reached)"),
             Self::CorruptedData => write!(f, "Corrupted packet or channel data"),
             Self::ConnectionTimedOut => write!(f, "Connection timed out after maximum retransmission attempts"),
+            Self::AuthenticationFailed => write!(f, "Authentication handshake or cryptographic signature verification failed"),
+            Self::ReplayDetected { sequence, window_bottom } => write!(
+                f,
+                "Replay detected: packet sequence {sequence} is older than replay window floor {window_bottom}"
+            ),
+            Self::RateLimitExceeded { pps_limit } => write!(
+                f,
+                "Rate limit exceeded: ingress exceeded maximum {pps_limit} packets/sec"
+            ),
+            Self::StaleAuthorityEpoch { current_epoch, packet_epoch } => write!(
+                f,
+                "Stale authority epoch: packet epoch {packet_epoch} rejected by active epoch {current_epoch}"
+            ),
+            Self::IncompatibleProtocolVersion { server_version, client_version } => write!(
+                f,
+                "Incompatible protocol version: server v{server_version} cannot negotiate with client v{client_version}"
+            ),
+            Self::MemoryQuotaExceeded { current_bytes, max_bytes } => write!(
+                f,
+                "Memory quota exceeded: connection allocated {current_bytes} bytes (max allowable {max_bytes} bytes)"
+            ),
         }
     }
 }
