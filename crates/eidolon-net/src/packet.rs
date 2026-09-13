@@ -1,0 +1,235 @@
+//! Zero-copy packet framing, header serialization, and payload extraction.
+
+use crate::error::NetError;
+use crate::protocol::{
+    ChannelType, PacketType, HEADER_SIZE, MAX_PACKET_SIZE, PROTOCOL_MAGIC, PROTOCOL_VERSION,
+};
+
+/// Fixed-size wire packet header containing sequence and sliding-window acknowledgment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PacketHeader {
+    /// Wire protocol version.
+    pub version: u16,
+    /// Channel delivery guarantee.
+    pub channel: ChannelType,
+    /// Packet type and control flags.
+    pub packet_type: PacketType,
+    /// Outgoing packet sequence number.
+    pub sequence: u16,
+    /// Highest sequence number received from remote peer.
+    pub ack: u16,
+    /// 32-bit bitfield of received packets prior to `ack`.
+    pub ack_bitfield: u32,
+}
+
+impl PacketHeader {
+    /// Creates a new packet header with current protocol version.
+    #[inline]
+    pub fn new(
+        channel: ChannelType,
+        packet_type: PacketType,
+        sequence: u16,
+        ack: u16,
+        ack_bitfield: u32,
+    ) -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            channel,
+            packet_type,
+            sequence,
+            ack,
+            ack_bitfield,
+        }
+    }
+
+    /// Serializes the 12-byte header into the destination buffer.
+    pub fn write_to(&self, out: &mut [u8]) -> Result<usize, NetError> {
+        let actual_len = out.len();
+        if actual_len < HEADER_SIZE {
+            return Err(NetError::TruncatedPacket {
+                expected_len: HEADER_SIZE,
+                actual_len,
+            });
+        }
+
+        let header_slice = out
+            .get_mut(..HEADER_SIZE)
+            .ok_or(NetError::TruncatedPacket {
+                expected_len: HEADER_SIZE,
+                actual_len,
+            })?;
+
+        header_slice[0] = PROTOCOL_MAGIC[0];
+        header_slice[1] = PROTOCOL_MAGIC[1];
+        header_slice[2] = (self.version & 0xFF) as u8;
+        header_slice[3] = self.channel.as_u8() | (self.packet_type.as_nibble() << 4);
+
+        let seq_bytes = self.sequence.to_be_bytes();
+        header_slice[4] = seq_bytes[0];
+        header_slice[5] = seq_bytes[1];
+
+        let ack_bytes = self.ack.to_be_bytes();
+        header_slice[6] = ack_bytes[0];
+        header_slice[7] = ack_bytes[1];
+
+        let ack_bit_bytes = self.ack_bitfield.to_be_bytes();
+        header_slice[8] = ack_bit_bytes[0];
+        header_slice[9] = ack_bit_bytes[1];
+        header_slice[10] = ack_bit_bytes[2];
+        header_slice[11] = ack_bit_bytes[3];
+
+        Ok(HEADER_SIZE)
+    }
+
+    /// Deserializes a packet header from an untrusted byte slice with strict bounds checking.
+    pub fn read_from(slice: &[u8]) -> Result<(Self, usize), NetError> {
+        if slice.len() < HEADER_SIZE {
+            return Err(NetError::TruncatedPacket {
+                expected_len: HEADER_SIZE,
+                actual_len: slice.len(),
+            });
+        }
+
+        let header_slice = slice.get(..HEADER_SIZE).ok_or(NetError::TruncatedPacket {
+            expected_len: HEADER_SIZE,
+            actual_len: slice.len(),
+        })?;
+
+        let magic = [header_slice[0], header_slice[1]];
+        if magic != PROTOCOL_MAGIC {
+            return Err(NetError::InvalidMagic {
+                expected: PROTOCOL_MAGIC,
+                received: magic,
+            });
+        }
+
+        let version = header_slice[2] as u16;
+        if version != PROTOCOL_VERSION {
+            return Err(NetError::UnsupportedVersion {
+                expected: PROTOCOL_VERSION,
+                received: version,
+            });
+        }
+
+        let channel = ChannelType::from_u8(header_slice[3] & 0x0F)?;
+        let packet_type = PacketType::from_nibble((header_slice[3] >> 4) & 0x0F)?;
+
+        let sequence = u16::from_be_bytes([header_slice[4], header_slice[5]]);
+        let ack = u16::from_be_bytes([header_slice[6], header_slice[7]]);
+        let ack_bitfield = u32::from_be_bytes([
+            header_slice[8],
+            header_slice[9],
+            header_slice[10],
+            header_slice[11],
+        ]);
+
+        Ok((
+            Self {
+                version,
+                channel,
+                packet_type,
+                sequence,
+                ack,
+                ack_bitfield,
+            },
+            HEADER_SIZE,
+        ))
+    }
+}
+
+/// Zero-copy borrowing view over an incoming network packet.
+#[derive(Debug, Clone, Copy)]
+pub struct PacketView<'a> {
+    /// Parsed packet header.
+    pub header: PacketHeader,
+    /// Unparsed payload slice borrowing from the raw packet.
+    pub payload: &'a [u8],
+}
+
+impl<'a> PacketView<'a> {
+    /// Parses an incoming network slice into a zero-copy packet view.
+    pub fn from_bytes(slice: &'a [u8]) -> Result<Self, NetError> {
+        if slice.len() > MAX_PACKET_SIZE {
+            return Err(NetError::PayloadTooLarge {
+                length: slice.len(),
+                max: MAX_PACKET_SIZE,
+            });
+        }
+
+        let (header, header_len) = PacketHeader::read_from(slice)?;
+        let payload = slice.get(header_len..).unwrap_or(&[]);
+
+        Ok(Self { header, payload })
+    }
+
+    /// Returns the total wire length of the packet in bytes.
+    #[inline]
+    pub fn wire_len(&self) -> usize {
+        HEADER_SIZE + self.payload.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_packet_header_roundtrip() {
+        let header = PacketHeader::new(
+            ChannelType::ReliableOrdered,
+            PacketType::ReliableMessage,
+            1234,
+            1230,
+            0b10101,
+        );
+
+        let mut buffer = [0u8; 16];
+        let written = header.write_to(&mut buffer).expect("serialize header");
+        assert_eq!(written, HEADER_SIZE);
+
+        let (decoded, read_len) = PacketHeader::read_from(&buffer).expect("deserialize header");
+        assert_eq!(read_len, HEADER_SIZE);
+        assert_eq!(header, decoded);
+    }
+
+    #[test]
+    fn test_packet_view_zero_copy() {
+        let mut buffer = [0u8; 32];
+        let header = PacketHeader::new(
+            ChannelType::UnreliableSequenced,
+            PacketType::StateUpdate,
+            500,
+            499,
+            0xFFFFFFFF,
+        );
+        header.write_to(&mut buffer).expect("write header");
+
+        let payload_data = b"hello world!";
+        buffer[HEADER_SIZE..HEADER_SIZE + payload_data.len()].copy_from_slice(payload_data);
+
+        let view = PacketView::from_bytes(&buffer[..HEADER_SIZE + payload_data.len()])
+            .expect("parse packet view");
+        assert_eq!(view.header.sequence, 500);
+        assert_eq!(view.payload, payload_data);
+    }
+
+    #[test]
+    fn test_malformed_header_rejections() {
+        // Too short
+        let short_buf = [0u8; 5];
+        assert!(PacketHeader::read_from(&short_buf).is_err());
+
+        // Invalid magic
+        let mut bad_magic = [0u8; 12];
+        bad_magic[0] = 0xAA;
+        bad_magic[1] = 0xBB;
+        assert!(PacketHeader::read_from(&bad_magic).is_err());
+
+        // Unsupported version
+        let mut bad_ver = [0u8; 12];
+        bad_ver[0] = PROTOCOL_MAGIC[0];
+        bad_ver[1] = PROTOCOL_MAGIC[1];
+        bad_ver[2] = 99; // Version 99
+        assert!(PacketHeader::read_from(&bad_ver).is_err());
+    }
+}

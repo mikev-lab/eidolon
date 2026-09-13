@@ -1,0 +1,481 @@
+//! Register-width bitstream reader and writer primitives.
+//!
+//! Provides zero-copy, zero-heap-allocation bit-level serialization and deserialization
+//! with safe bounds checks, variable-length integer (varint) encodings, and byte alignment.
+
+use crate::error::BitstreamError;
+
+/// Bounded bitstream writer operating directly on caller-provided byte slices.
+#[derive(Debug)]
+pub struct BitWriter<'a> {
+    buffer: &'a mut [u8],
+    bit_offset: usize,
+}
+
+impl<'a> BitWriter<'a> {
+    /// Creates a new `BitWriter` wrapping a mutable byte slice.
+    ///
+    /// Clears the initial buffer slice up to its capacity to guarantee zeroed bits.
+    #[inline]
+    pub fn new(buffer: &'a mut [u8]) -> Self {
+        buffer.fill(0);
+        Self {
+            buffer,
+            bit_offset: 0,
+        }
+    }
+
+    /// Creates a `BitWriter` wrapping a mutable byte slice without zeroing existing memory.
+    #[inline]
+    pub fn from_existing(buffer: &'a mut [u8], bit_offset: usize) -> Self {
+        Self { buffer, bit_offset }
+    }
+
+    /// Returns the current bit position within the stream.
+    #[inline]
+    pub fn bit_offset(&self) -> usize {
+        self.bit_offset
+    }
+
+    /// Returns the number of fully or partially written bytes.
+    #[inline]
+    pub fn byte_len(&self) -> usize {
+        self.bit_offset.div_ceil(8)
+    }
+
+    /// Returns the total capacity of the underlying byte slice in bytes.
+    #[inline]
+    pub fn buffer_capacity(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Returns the total capacity of the underlying buffer in bits.
+    #[inline]
+    pub fn total_bits(&self) -> usize {
+        self.buffer.len().saturating_mul(8)
+    }
+
+    /// Returns the number of remaining bits that can be written.
+    #[inline]
+    pub fn remaining_bits(&self) -> usize {
+        self.total_bits().saturating_sub(self.bit_offset)
+    }
+
+    /// Returns an immutable subslice of the written bytes.
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        let len = self.byte_len();
+        self.buffer.get(..len).unwrap_or(&[])
+    }
+
+    /// Writes a single boolean bit (1 if true, 0 if false).
+    #[inline]
+    pub fn write_bit(&mut self, value: bool) -> Result<(), BitstreamError> {
+        let byte_idx = self.bit_offset / 8;
+        let bit_idx = self.bit_offset % 8;
+
+        if let Some(byte) = self.buffer.get_mut(byte_idx) {
+            let mask = 1u8 << (7 - bit_idx);
+            if value {
+                *byte |= mask;
+            } else {
+                *byte &= !mask;
+            }
+            self.bit_offset += 1;
+            Ok(())
+        } else {
+            Err(BitstreamError::BufferOverflow {
+                required_bits: 1,
+                available_bits: 0,
+            })
+        }
+    }
+
+    /// Writes arbitrary unsigned bits (1 to 64 bits).
+    pub fn write_bits(&mut self, value: u64, num_bits: usize) -> Result<(), BitstreamError> {
+        if num_bits == 0 {
+            return Ok(());
+        }
+        if num_bits > 64 {
+            return Err(BitstreamError::InvalidBitWidth(num_bits));
+        }
+
+        let remaining = self.remaining_bits();
+        if num_bits > remaining {
+            return Err(BitstreamError::BufferOverflow {
+                required_bits: num_bits,
+                available_bits: remaining,
+            });
+        }
+
+        // Fast path for byte-aligned single byte writes
+        if num_bits == 8 && self.bit_offset.is_multiple_of(8) {
+            let byte_idx = self.bit_offset / 8;
+            if let Some(byte) = self.buffer.get_mut(byte_idx) {
+                *byte = value as u8;
+                self.bit_offset += 8;
+                return Ok(());
+            }
+        }
+
+        for i in (0..num_bits).rev() {
+            let bit = ((value >> i) & 1) != 0;
+            let byte_idx = self.bit_offset / 8;
+            let bit_idx = self.bit_offset % 8;
+            if let Some(byte) = self.buffer.get_mut(byte_idx) {
+                let mask = 1u8 << (7 - bit_idx);
+                if bit {
+                    *byte |= mask;
+                } else {
+                    *byte &= !mask;
+                }
+                self.bit_offset += 1;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Writes a single 8-bit unsigned integer.
+    #[inline]
+    pub fn write_u8(&mut self, val: u8) -> Result<(), BitstreamError> {
+        self.write_bits(val as u64, 8)
+    }
+
+    /// Writes a 16-bit unsigned integer.
+    #[inline]
+    pub fn write_u16(&mut self, val: u16) -> Result<(), BitstreamError> {
+        self.write_bits(val as u64, 16)
+    }
+
+    /// Writes a 32-bit unsigned integer.
+    #[inline]
+    pub fn write_u32(&mut self, val: u32) -> Result<(), BitstreamError> {
+        self.write_bits(val as u64, 32)
+    }
+
+    /// Writes a 64-bit unsigned integer.
+    #[inline]
+    pub fn write_u64(&mut self, val: u64) -> Result<(), BitstreamError> {
+        self.write_bits(val, 64)
+    }
+
+    /// Writes a variable-length 64-bit integer using 7-bit chunks with MSB continuation.
+    pub fn write_varint(&mut self, mut value: u64) -> Result<usize, BitstreamError> {
+        let mut bytes_written = 0;
+        loop {
+            let mut byte = (value & 0x7F) as u8;
+            value >>= 7;
+            if value != 0 {
+                byte |= 0x80;
+            }
+            self.write_u8(byte)?;
+            bytes_written += 1;
+            if value == 0 {
+                break;
+            }
+        }
+        Ok(bytes_written)
+    }
+
+    /// Writes raw bytes into the stream.
+    pub fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), BitstreamError> {
+        let bits_needed = bytes.len().saturating_mul(8);
+        if bits_needed > self.remaining_bits() {
+            return Err(BitstreamError::BufferOverflow {
+                required_bits: bits_needed,
+                available_bits: self.remaining_bits(),
+            });
+        }
+
+        // Fast path when byte-aligned
+        if self.bit_offset.is_multiple_of(8) {
+            let start = self.bit_offset / 8;
+            let end = start + bytes.len();
+            if let Some(dest) = self.buffer.get_mut(start..end) {
+                dest.copy_from_slice(bytes);
+                self.bit_offset += bits_needed;
+                return Ok(());
+            }
+        }
+
+        for &b in bytes {
+            self.write_u8(b)?;
+        }
+        Ok(())
+    }
+
+    /// Pads the bitstream to the next byte boundary with zero bits.
+    #[inline]
+    pub fn flush_byte_alignment(&mut self) -> Result<(), BitstreamError> {
+        let rem = self.bit_offset % 8;
+        if rem != 0 {
+            let padding = 8 - rem;
+            self.write_bits(0, padding)?;
+        }
+        Ok(())
+    }
+}
+
+/// Bounded bitstream reader operating directly on caller-provided immutable byte slices.
+#[derive(Debug)]
+pub struct BitReader<'a> {
+    buffer: &'a [u8],
+    bit_offset: usize,
+}
+
+impl<'a> BitReader<'a> {
+    /// Creates a new `BitReader` wrapping an immutable byte slice.
+    #[inline]
+    pub fn new(buffer: &'a [u8]) -> Self {
+        Self {
+            buffer,
+            bit_offset: 0,
+        }
+    }
+
+    /// Returns current bit offset within the slice.
+    #[inline]
+    pub fn bit_offset(&self) -> usize {
+        self.bit_offset
+    }
+
+    /// Returns the total number of bits in the underlying buffer.
+    #[inline]
+    pub fn total_bits(&self) -> usize {
+        self.buffer.len().saturating_mul(8)
+    }
+
+    /// Returns the number of remaining bits available to read.
+    #[inline]
+    pub fn remaining_bits(&self) -> usize {
+        self.total_bits().saturating_sub(self.bit_offset)
+    }
+
+    /// Reads a single boolean bit.
+    #[inline]
+    pub fn read_bit(&mut self) -> Result<bool, BitstreamError> {
+        let byte_idx = self.bit_offset / 8;
+        let bit_idx = self.bit_offset % 8;
+
+        if let Some(&byte) = self.buffer.get(byte_idx) {
+            let mask = 1u8 << (7 - bit_idx);
+            let is_set = (byte & mask) != 0;
+            self.bit_offset += 1;
+            Ok(is_set)
+        } else {
+            Err(BitstreamError::UnexpectedEof {
+                requested_bits: 1,
+                remaining_bits: 0,
+            })
+        }
+    }
+
+    /// Reads arbitrary unsigned bits (1 to 64 bits).
+    pub fn read_bits(&mut self, num_bits: usize) -> Result<u64, BitstreamError> {
+        if num_bits == 0 {
+            return Ok(0);
+        }
+        if num_bits > 64 {
+            return Err(BitstreamError::InvalidBitWidth(num_bits));
+        }
+
+        let remaining = self.remaining_bits();
+        if num_bits > remaining {
+            return Err(BitstreamError::UnexpectedEof {
+                requested_bits: num_bits,
+                remaining_bits: remaining,
+            });
+        }
+
+        // Fast path for byte-aligned single byte reads
+        if num_bits == 8 && self.bit_offset.is_multiple_of(8) {
+            let byte_idx = self.bit_offset / 8;
+            if let Some(&byte) = self.buffer.get(byte_idx) {
+                self.bit_offset += 8;
+                return Ok(byte as u64);
+            }
+        }
+
+        let mut value = 0u64;
+        for _ in 0..num_bits {
+            let bit = self.read_bit()?;
+            value = (value << 1) | (bit as u64);
+        }
+
+        Ok(value)
+    }
+
+    /// Reads an 8-bit unsigned integer.
+    #[inline]
+    pub fn read_u8(&mut self) -> Result<u8, BitstreamError> {
+        self.read_bits(8).map(|v| v as u8)
+    }
+
+    /// Reads a 16-bit unsigned integer.
+    #[inline]
+    pub fn read_u16(&mut self) -> Result<u16, BitstreamError> {
+        self.read_bits(16).map(|v| v as u16)
+    }
+
+    /// Reads a 32-bit unsigned integer.
+    #[inline]
+    pub fn read_u32(&mut self) -> Result<u32, BitstreamError> {
+        self.read_bits(32).map(|v| v as u32)
+    }
+
+    /// Reads a 64-bit unsigned integer.
+    #[inline]
+    pub fn read_u64(&mut self) -> Result<u64, BitstreamError> {
+        self.read_bits(64)
+    }
+
+    /// Reads a variable-length 64-bit integer.
+    ///
+    /// Enforces a maximum of 10 bytes to prevent unbounded continuation attacks.
+    pub fn read_varint(&mut self) -> Result<u64, BitstreamError> {
+        let mut result = 0u64;
+        let mut shift = 0;
+
+        for i in 0..10 {
+            let byte = self.read_u8()?;
+            let val = (byte & 0x7F) as u64;
+
+            // Check for 64-bit integer overflow on the 10th byte
+            if i == 9 && (val & 0x7E) != 0 {
+                return Err(BitstreamError::InvalidVarint);
+            }
+
+            result |= val << shift;
+            if (byte & 0x80) == 0 {
+                return Ok(result);
+            }
+            shift += 7;
+        }
+
+        Err(BitstreamError::InvalidVarint)
+    }
+
+    /// Reads raw bytes into the provided slice.
+    pub fn read_bytes(&mut self, out: &mut [u8]) -> Result<(), BitstreamError> {
+        let bits_needed = out.len().saturating_mul(8);
+        if bits_needed > self.remaining_bits() {
+            return Err(BitstreamError::UnexpectedEof {
+                requested_bits: bits_needed,
+                remaining_bits: self.remaining_bits(),
+            });
+        }
+
+        // Fast path when byte-aligned
+        if self.bit_offset.is_multiple_of(8) {
+            let start = self.bit_offset / 8;
+            let end = start + out.len();
+            if let Some(src) = self.buffer.get(start..end) {
+                out.copy_from_slice(src);
+                self.bit_offset += bits_needed;
+                return Ok(());
+            }
+        }
+
+        for slot in out.iter_mut() {
+            *slot = self.read_u8()?;
+        }
+        Ok(())
+    }
+
+    /// Aligns read cursor to the next byte boundary.
+    #[inline]
+    pub fn align_to_byte(&mut self) {
+        let rem = self.bit_offset % 8;
+        if rem != 0 {
+            self.bit_offset += 8 - rem;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bit_writer_reader_single_bits() {
+        let mut buf = [0u8; 2];
+        let mut writer = BitWriter::new(&mut buf);
+        writer.write_bit(true).expect("write 1");
+        writer.write_bit(false).expect("write 0");
+        writer.write_bit(true).expect("write 1");
+        writer.write_bit(true).expect("write 1");
+
+        let mut reader = BitReader::new(&buf);
+        assert!(reader.read_bit().expect("read 1"));
+        assert!(!reader.read_bit().expect("read 0"));
+        assert!(reader.read_bit().expect("read 1"));
+        assert!(reader.read_bit().expect("read 1"));
+    }
+
+    #[test]
+    fn test_arbitrary_bit_widths() {
+        let mut buf = [0u8; 8];
+        let mut writer = BitWriter::new(&mut buf);
+        writer.write_bits(0b101, 3).expect("write 3 bits");
+        writer.write_bits(0b11001, 5).expect("write 5 bits");
+        writer.write_bits(0xABCD, 16).expect("write 16 bits");
+        writer.write_bits(42, 12).expect("write 12 bits");
+
+        let mut reader = BitReader::new(&buf);
+        assert_eq!(reader.read_bits(3).expect("read 3 bits"), 0b101);
+        assert_eq!(reader.read_bits(5).expect("read 5 bits"), 0b11001);
+        assert_eq!(reader.read_bits(16).expect("read 16 bits"), 0xABCD);
+        assert_eq!(reader.read_bits(12).expect("read 12 bits"), 42);
+    }
+
+    #[test]
+    fn test_varint_roundtrip() {
+        let test_values = [
+            0u64,
+            1,
+            127,
+            128,
+            255,
+            300,
+            16383,
+            16384,
+            u32::MAX as u64,
+            u64::MAX - 1,
+            u64::MAX,
+        ];
+
+        for &val in &test_values {
+            let mut buf = [0u8; 16];
+            let mut writer = BitWriter::new(&mut buf);
+            let written = writer.write_varint(val).expect("write varint");
+            assert!(written <= 10);
+
+            let mut reader = BitReader::new(writer.as_bytes());
+            let decoded = reader.read_varint().expect("read varint");
+            assert_eq!(val, decoded);
+        }
+    }
+
+    #[test]
+    fn test_overflow_and_eof_protection() {
+        let mut buf = [0u8; 1];
+        let mut writer = BitWriter::new(&mut buf);
+        assert!(writer.write_bits(0xFF, 8).is_ok());
+        assert!(writer.write_bit(true).is_err());
+
+        let mut reader = BitReader::new(&buf);
+        assert!(reader.read_bits(8).is_ok());
+        assert!(reader.read_bit().is_err());
+    }
+
+    #[test]
+    fn test_varint_malicious_continuation_attack() {
+        // 11 continuation bytes
+        let hostile_buf = [0xFFu8; 11];
+        let mut reader = BitReader::new(&hostile_buf);
+        let result = reader.read_varint();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), BitstreamError::InvalidVarint);
+    }
+}
