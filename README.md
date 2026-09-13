@@ -4,7 +4,8 @@
 
 **High-concurrency, low-bandwidth (<1 KB/s design target) zoned & instanced MMO server engine in Rust.**
 
-[![Status: Architecture Complete](https://img.shields.io/badge/Status-Architecture_Complete_(Phases_1--7)-success.svg)](#development-status)
+[![Status: Core Engine Complete](https://img.shields.io/badge/Status-Core_Engine_Complete_(Phases_1--7)-success.svg)](#development-status-core-phases-1-7-completed)
+[![Roadmap: Production Infrastructure](https://img.shields.io/badge/Roadmap-Production_Infra_(Phases_8--13)-blue.svg)](./docs/ROADMAP.md)
 [![License: BSL 1.1](https://img.shields.io/badge/License-BSL_1.1_(Fair_Source)-blue.svg)](./LICENSE)
 [![Indie Grant: <$1M Free](https://img.shields.io/badge/Indie_Grant-%3C$1M_Free-success.svg)](./LICENSE)
 [![Language: Rust](https://img.shields.io/badge/Language-Rust-orange.svg)](https://www.rust-lang.org/)
@@ -17,6 +18,7 @@
   <a href="#world-topology">World Topology</a> •
   <a href="#gacha--long-tail-eos-preservation">Gacha & EoS</a> •
   <a href="#workspace-architecture">Crates</a> •
+  <a href="./docs/ROADMAP.md">Roadmap</a> •
   <a href="#technical-documentation">Docs</a> •
   <a href="#licensing--fair-source">License</a>
 </p>
@@ -26,8 +28,8 @@
 ---
 
 > [!NOTE]
-> **Project Status: Core Engine Architecture Complete: Production Hardening & Full Replication In Progress.**  
-> All 7 core phases of the `eidolon` MMO world server engine are implemented, tested, and benchmarked from first principles in pure Rust with zero third-party runtime dependencies. Microbenchmarks, 2,000 CCU end-to-end simulation proofs, and full architectural specifications are published below.
+> **Project Status: Core Engine Architecture Complete (Phases 1-7) • Production Infrastructure Active (Phases 8-13).**  
+> All 7 core phases of the `eidolon` MMO world server engine are implemented, tested, and benchmarked from first principles in pure Rust with zero third-party runtime dependencies. With the core simulation and sub-1KB/s wire budget verified, active development has pivoted to **Production Infrastructure Engineering** (distributed authority, write-ahead persistence, crash recovery, and multi-server chaos testing). See [`docs/ROADMAP.md`](./docs/ROADMAP.md).
 
 ---
 
@@ -246,6 +248,7 @@ Detailed architectural and mathematical specifications are published in `docs/`:
 * **[Zones & Instancing (`docs/ZONES_AND_INSTANCING.md`)](./docs/ZONES_AND_INSTANCING.md):** Seamless 16-meter boundary seams, ephemeral dungeon pools, scale-to-zero gacha raids, and cold account hibernation.
 * **[Benchmarks & Verification (`docs/BENCHMARKS.md`)](./docs/BENCHMARKS.md):** Empirical nanosecond microbenchmark results, 2,000 CCU load simulation, and memory leak audit proofs.
 * **[Cloud Infrastructure Cost Analysis (`docs/COST_ANALYSIS.md`)](./docs/COST_ANALYSIS.md):** Public cloud egress financial models, headcount savings matrix (5 to 5,000,000 CCU), and End-of-Service (EoS) perpetual maintenance economics.
+* **[Production Infrastructure Roadmap (`docs/ROADMAP.md`)](./docs/ROADMAP.md):** Distributed authority, persistence pipelines, crash reconstruction, compound chaos suites, and path to commercial launch (Phases 8-13).
 * **[Operations, Observability & Security (`docs/OPERATIONS_AND_SECURITY.md`)](./docs/OPERATIONS_AND_SECURITY.md):** Adversarial threat modeling, SRE phase latency telemetry, protocol semantic versioning, and Agones lifecycle hooks.
 
 ---
@@ -286,7 +289,24 @@ For the full legal parameters, please review the [LICENSE](./LICENSE) file.
 
 ---
 
-## Development Status
+## Production Infrastructure Roadmap (Phases 8-13)
+
+With the core networking, spatial partitioning, dead reckoning, and simulation loops verified, the engineering program has pivoted to **Production Distributed Systems Infrastructure** (P0 Prerequisites, P1 Commercial Launch Gates, and P2 Maturity).
+
+| Phase | Focus Area | Critical Deliverables | Priority |
+| :--- | :--- | :--- | :--- |
+| **Phase 8** | **Distributed Authority & Security** | HMAC session binding, sequence replay windows, anti-DoS quotas, authority epochs under reconnect, split-brain fencing, and protocol versioning. | **P0 Critical** |
+| **Phase 9** | **Authoritative Persistence & Recovery** | Write-ahead journal (WAL), double-spend prevention, 30s DB outage buffering, disposable zone reconstruction after SIGKILL, and cold hydration. | **P0 Critical** |
+| **Phase 10** | **End-to-End Flow & Clock Discipline** | Continuous backpressure pipeline (socket -> ingress -> sim -> AoI -> egress -> socket), priority admission shedding, and monotonic clock time-warp defense. | **P1 Launch** |
+| **Phase 11** | **Observability & Distributed Tracing** | Bounded-cardinality Prometheus metrics, microsecond phase timing, correlated tracing `[session, tick, entity, zone, epoch]`, and SRE runbooks. | **P1 Launch** |
+| **Phase 12** | **Network Impairment & Chaos Testing** | Compound chaos (5% loss + 150ms jitter), deep parser fuzzing corpus, 10k-100k CCU multi-server harness, 7-day soak test, and zero-downtime rolling upgrades. | **P1 Launch** |
+| **Phase 13** | **Platform Maturity & Formal Invariants** | Multi-platform benchmarks (x86-64 / ARM64), Linux socket kernel tuning, eBPF packet capture accounting, per-player memory budgets, and property-based transport tests. | **P2 Maturity** |
+
+👉 **For the complete technical specifications, architectural invariants, and milestone checklists, see [`docs/ROADMAP.md`](./docs/ROADMAP.md).**
+
+---
+
+## Development Status (Core Phases 1-7 Completed)
 
 All 7 execution phases of `eidolon` are complete, tested, and verified against the strict governance framework:
 
