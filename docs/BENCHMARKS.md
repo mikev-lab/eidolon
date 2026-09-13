@@ -31,13 +31,17 @@ Measurements collected via the native nanosecond microbenchmark suite (`crates/e
 
 ## 2. 2,000 CCU Bot Load Simulation Results
 
-Measured over 200 consecutive ticks (10.0 seconds of continuous 20 Hz simulation) with 2,000 synthetic bot clients communicating over UDP loopback sockets with full 3D spatial queries and tiered AoI replication:
+Measured over 200 consecutive ticks (10.0 seconds of continuous 20 Hz simulation) with 2,000 synthetic bot clients in a multi-zone world topology and 100 active observer clients communicating over 4 multiplexed UDP loopback sockets with full 3D spatial queries, visibility reconciliation, and tiered AoI replication:
 
 | Metric | Target Specification | Empirical Result | Margin of Compliance |
 | :--- | :--- | :--- | :--- |
-| **Server Replication Egress per Client** | < 1,228.8 B/s (1.2 KB/s) | **1,203.48 B/s (1.18 KB/s)** | Conforms to wire budget |
-| **Client Input Ingress per Bot** | < 1,228.8 B/s (1.2 KB/s) | **15.43 B/s (0.02 KB/s)** | 98.7% under budget (Dead Reckoning) |
-| **Total Server Egress Transmitted** | Bounded | **1,203,478 bytes (1.15 MB)** | Full tiered replication datagrams |
+| **Server Replication Egress (L7 Payload)** | < 1,228.8 B/s (1.2 KB/s) | **766.51 B/s (0.75 KB/s)** | 37.6% budget headroom |
+| **Server Replication Egress (L3/L4 Wire)** | < 1,228.8 B/s (1.2 KB/s) | **1,046.51 B/s (1.02 KB/s)** | Conforms to wire budget (includes 28B IP/UDP framing) |
+| **Client Input Ingress (L7 Payload)** | < 1,228.8 B/s (1.2 KB/s) | **15.43 B/s (0.02 KB/s)** | 98.7% under budget (Dead Reckoning) |
+| **Client Input Ingress (L3/L4 Wire)** | < 1,228.8 B/s (1.2 KB/s) | **30.32 B/s (0.03 KB/s)** | 97.5% under budget (includes 28B IP/UDP framing) |
+| **Reconstructible Replication Accuracy** | < 2.0 mm tolerance | **0.977 mm (< 1.0 mm)** | Sub-millimeter global coordinate reconstruction |
+| **Total Server Egress Transmitted (L7)** | Bounded | **766,514 bytes (0.73 MB)** | Full tiered replication datagrams |
+| **Total Server Egress Transmitted (L3/L4)**| Bounded | **1,046,514 bytes (1.00 MB)**| Includes 28-byte IP/UDP headers |
 | **Authoritative Simulation Cadence** | 20 Hz (50ms interval) | **Locked at 20 Hz (+/- 5.0ms)** | Target-instant pacing |
 | **Zero Entity Loss Invariant** | 100% entity accounting | **2,000 / 2,000 entities intact** | 0 entities lost across zones |
 | **Seam Boundary Handoffs** | In-memory atomic migration | **1,580 seam migrations** | 0 duplicate entities |

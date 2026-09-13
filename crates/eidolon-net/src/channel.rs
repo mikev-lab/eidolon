@@ -153,6 +153,14 @@ impl<const PENDING_CAP: usize, const ORDERED_CAP: usize> ReliableChannel<PENDING
             });
         }
 
+        // Enforce sliding-window boundary: flight distance from oldest unacked sequence cannot exceed PENDING_CAP
+        if let Some(oldest) = self.oldest_pending_seq() {
+            let flight = self.next_outgoing_seq.wrapping_sub(oldest) as usize;
+            if flight >= PENDING_CAP {
+                return Err(NetError::QueueFull);
+            }
+        }
+
         // Find an empty pending slot
         let slot = self
             .pending_packets
@@ -333,7 +341,8 @@ impl<const PENDING_CAP: usize, const ORDERED_CAP: usize> ReliableChannel<PENDING
                     return Err(NetError::ConnectionTimedOut);
                 }
 
-                pending.retry_countdown = DEFAULT_RETRY_TICKS;
+                let shift = pending.retry_count.saturating_sub(1).min(3);
+                pending.retry_countdown = (DEFAULT_RETRY_TICKS << shift).min(32);
 
                 if let Some(payload_slice) = pending.payload.get(..pending.len) {
                     on_retry(pending.sequence, payload_slice);
@@ -354,6 +363,32 @@ impl<const PENDING_CAP: usize, const ORDERED_CAP: usize> ReliableChannel<PENDING
     /// Sets the maximum retransmission attempts before declaring timeout.
     pub fn set_max_retries(&mut self, max_retries: u8) {
         self.max_retries = max_retries;
+    }
+
+    /// Returns the next expected incoming sequence number.
+    #[inline]
+    pub fn expected_incoming_seq(&self) -> u16 {
+        self.expected_incoming_seq
+    }
+
+    /// Returns the next outgoing sequence number.
+    #[inline]
+    pub fn next_outgoing_seq(&self) -> u16 {
+        self.next_outgoing_seq
+    }
+
+    /// Returns the oldest unacknowledged sequence number still in flight, if any.
+    pub fn oldest_pending_seq(&self) -> Option<u16> {
+        let mut oldest = None;
+        let mut max_age = 0u16;
+        for pending in self.pending_packets.iter().flatten() {
+            let age = self.next_outgoing_seq.wrapping_sub(pending.sequence);
+            if oldest.is_none() || age > max_age {
+                max_age = age;
+                oldest = Some(pending.sequence);
+            }
+        }
+        oldest
     }
 
     /// Returns the number of currently pending unacknowledged packets.
@@ -517,5 +552,27 @@ mod tests {
             retry_count, 3,
             "Must attempt exactly 3 retries before timeout"
         );
+    }
+
+    #[test]
+    fn test_reliable_channel_exponential_backoff_schedule() {
+        let mut channel = ReliableChannel::<4, 4>::new();
+        channel.set_max_retries(5);
+        let _seq = channel.queue_reliable_message(b"backoff_test").unwrap();
+
+        let mut retry_ticks = Vec::new();
+        for tick in 0..100 {
+            let res = channel.check_retransmissions(|_s, _d| {
+                retry_ticks.push(tick);
+            });
+            if res.is_err() {
+                break;
+            }
+        }
+
+        assert_eq!(retry_ticks.len(), 5);
+        let deltas: Vec<usize> = retry_ticks.windows(2).map(|w| w[1] - w[0]).collect();
+        // Intervals strictly double each cycle (4, 8, 16, 32 ticks + 1 tick boundary)
+        assert_eq!(deltas, vec![5, 9, 17, 33]);
     }
 }

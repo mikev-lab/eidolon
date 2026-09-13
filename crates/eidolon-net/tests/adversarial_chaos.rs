@@ -102,6 +102,7 @@ fn test_unreliable_sequencer_jitter_and_reordering() {
 fn test_reliable_channel_1000_messages_under_35_percent_loss() {
     let mut rng = ChaosPrng::new(99999);
     let mut sender_channel = ReliableChannel::<64, 64>::new();
+    sender_channel.set_max_retries(64);
     let mut receiver_channel = ReliableChannel::<64, 64>::new();
 
     let mut delivered_messages = Vec::new();
@@ -109,7 +110,7 @@ fn test_reliable_channel_1000_messages_under_35_percent_loss() {
     let target_messages = 500u32;
 
     // Simulation runs in discrete 50ms ticks
-    for _tick in 0..5000 {
+    for _tick in 0..10000 {
         // Queue new message if sender channel has capacity and we haven't reached target
         if current_msg_id < target_messages && sender_channel.pending_count() < 32 {
             let payload = current_msg_id.to_be_bytes();
@@ -121,9 +122,12 @@ fn test_reliable_channel_1000_messages_under_35_percent_loss() {
 
         // Collect packets to send (new + retransmissions)
         let mut packets_to_transmit = Vec::new();
-        let _ = sender_channel.check_retransmissions(|seq, data| {
+        let res = sender_channel.check_retransmissions(|seq, data| {
             packets_to_transmit.push((seq, data.to_vec()));
         });
+        if res.is_err() {
+            break;
+        }
 
         // Transmit over synthetic lossy link (35% loss)
         for (seq, data) in packets_to_transmit {
@@ -132,7 +136,9 @@ fn test_reliable_channel_1000_messages_under_35_percent_loss() {
             }
 
             // Receiver ingests packet
-            if let Ok(Some((payload, len))) = receiver_channel.receive_reliable_packet(seq, &data) {
+            let recv_res = receiver_channel.receive_reliable_packet(seq, &data);
+            let accepted = recv_res.is_ok();
+            if let Ok(Some((payload, len))) = recv_res {
                 delivered_messages.push(u32::from_be_bytes([
                     payload[0], payload[1], payload[2], payload[3],
                 ]));
@@ -144,8 +150,8 @@ fn test_reliable_channel_1000_messages_under_35_percent_loss() {
                 }
             }
 
-            // Send ACK packet back to sender (ACKs also subject to 20% loss)
-            if rng.next_f64() >= 0.20 {
+            // Send ACK packet back to sender if accepted by receiver (ACKs subject to 20% loss)
+            if accepted && rng.next_f64() >= 0.20 {
                 let (ack, ack_bitfield) = (seq, 0u32);
                 sender_channel.process_remote_ack(ack, ack_bitfield);
             }

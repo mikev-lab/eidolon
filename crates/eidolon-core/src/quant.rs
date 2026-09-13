@@ -25,6 +25,12 @@ pub const HORIZONTAL_RESOLUTION_METERS: f64 = 64.0 / (MAX_QUANTIZED_HORIZONTAL a
 /// Vertical resolution in meters: 32.0 / 4095.0 approx 0.0078144m (7.81 mm).
 pub const VERTICAL_RESOLUTION_METERS: f64 = 32.0 / (MAX_QUANTIZED_VERTICAL as f64);
 
+/// Transform flag bit (bit 3 of flags nibble / bit 7 of byte 6) indicating a 17-byte Cell Anchor update.
+///
+/// When set, the wire representation prepends 6-byte cell coordinates `(cx: i16, cy: i16, cz: i16)`
+/// ahead of the 7-byte transform, allowing observers to reconstruct global positions upon AoI entry or cell crossing.
+pub const FLAG_CELL_ANCHOR: u8 = 1 << 3;
+
 /// Quantized local cell-relative coordinates.
 ///
 /// Encodes horizontal positions X and Z as 16-bit unsigned integers
@@ -119,6 +125,12 @@ impl QuantizedCellCoord {
     /// bit-exact Euclidean cell decomposition:
     /// - Horizontal cell size: 64.0m (2^6 m, 38-bit raw in 32.32 representation)
     /// - Vertical cell size: 32.0m (2^5 m, 37-bit raw in 32.32 representation)
+    ///
+    /// # World Bounds and Fixed64 Invariant:
+    /// When transmitting discrete cell indices as 16-bit signed integers `(i16, i16, i16)`
+    /// over the wire, horizontal indices span `[-32,768, 32,767] * 64m = [-2,097,152m, +2,097,151m]`
+    /// (a 4,194 km x 4,194 km world map), which safely fits within the `Fixed64` 32.32 range
+    /// of `[-2^31, 2^31 - 1]` meters (approx +/- 2.14 billion meters) without arithmetic overflow.
     #[inline]
     pub fn quantize_from_global(pos: Vec3Fix) -> (i32, i32, i32, Self) {
         let cell_x = (pos.x.raw() >> 38) as i32;
