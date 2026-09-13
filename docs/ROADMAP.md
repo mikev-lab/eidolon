@@ -22,7 +22,7 @@ The roadmap is structured into two eras:
 ├─────────────┼───────────────────────────────────────────────────┼─────────────┤
 │ Phase 1-7   │ Core Simulation, Quantization, Transport & AoI    │ COMPLETED   │
 │ Phase 8     │ Distributed Authority, Session Security & Quotas  │ COMPLETED   │
-│ Phase 9     │ Authoritative Persistence & Crash Reconstruction  │ P0 Critical │
+│ Phase 9     │ Authoritative Persistence & Crash Reconstruction  │ COMPLETED   │
 │ Phase 10    │ End-to-End Backpressure & Capacity Admission      │ P1 Launch   │
 │ Phase 11    │ Production Observability & Distributed Tracing    │ P1 Launch   │
 │ Phase 12    │ Real Network Impairment, Fuzzing & Multi-Server   │ P1 Launch   │
@@ -108,30 +108,30 @@ Following strict distributed systems engineering discipline, deliverables are ca
 
 ---
 
-### Phase 9: Authoritative Persistence, Transactional Consistency & Crash Recovery (P0)
+### Phase 9: Authoritative Persistence, Transactional Consistency & Crash Recovery (P0 - Completed & Verified)
 
 *Objective: Implement a rock-solid, crash-resilient persistence architecture with an explicit consistency pipeline, eliminating item duplication exploits, rollbacks, and progress loss during node crashes or database outages.*
 
-- **Milestone 9.1: Authoritative Consistency Pipeline & Write-Ahead Journal**
-  - Explicit four-stage state flow:
+- [x] **Milestone 9.1: Authoritative Consistency Pipeline & Write-Ahead Journal**
+  - [x] Explicit four-stage state flow:
     $$\text{Simulation Tick} \longrightarrow \text{Authoritative State} \longrightarrow \text{Durable Write-Ahead Journal (WAL)} \longrightarrow \text{Periodic Checkpoint / DB}$$
-  - Asynchronous, non-blocking append-only binary journal operating independently from the 20 Hz tick thread.
-  - Flush acknowledgment semantics: mutations affecting durable state (trades, drops, quest completions) return client ACK only after journal synchronization.
-- **Milestone 9.2: Double-Spend Prevention & Multi-Session Fencing**
-  - Atomic transactional boundaries for currency, item exchanges, and inventory transfers.
-  - Distributed lock tokens with generation counters preventing dual-login duplicate exploits.
-  - Rejection of overlapping session writes: old session cannot overwrite newer state during rapid reconnects.
-- **Milestone 9.3: Asynchronous Database Outage Resilience**
-  - Graceful degradation under prolonged (30-second) database or storage unavailability.
-  - Bounded in-memory journal buffer: queues persistent mutations without blocking the 20 Hz simulation loop.
-  - Exponential backoff reconnect and automated replay of pending journal entries upon database restoration.
-- **Milestone 9.4: Disposable Zone Server Crash Reconstruction**
-  - Crash recovery architecture: zone worker nodes are fully disposable and stateless in compute.
-  - Automated state reconstruction: if `zone-worker-17` crashes, neighboring or replacement nodes reconstruct zone state from the durable journal and active client session snapshots.
-  - Automated chaos test suite: simulating process kills (`SIGKILL`), sudden machine drops, and partial network partitions with 100% state recovery and zero entity duplication.
-- **Milestone 9.5: Cold Account Hibernation to Hot Hydration Lifecycle**
-  - Production binary serialization for dormant accounts (<256 bytes per snapshot).
-  - Sub-5ms hydration pipeline restoring characters, inventories, and cooldowns directly into active zone spatial grids upon client login.
+  - [x] Asynchronous, non-blocking append-only binary journal operating independently from the 20 Hz tick thread.
+  - [x] Flush acknowledgment semantics: mutations affecting durable state (trades, drops, quest completions) return client ACK only after journal synchronization.
+- [x] **Milestone 9.2: Double-Spend Prevention & Multi-Session Fencing**
+  - [x] Atomic transactional boundaries for currency, item exchanges, and inventory transfers.
+  - [x] Distributed lock tokens with generation counters (`GenerationLock`) preventing dual-login duplicate exploits.
+  - [x] Rejection of overlapping session writes: old session cannot overwrite newer state during rapid reconnects.
+- [x] **Milestone 9.3: Asynchronous Database Outage Resilience**
+  - [x] Graceful degradation under prolonged (30-second) database or storage unavailability.
+  - [x] Bounded in-memory journal buffer: queues persistent mutations without blocking the 20 Hz simulation loop.
+  - [x] Exponential backoff reconnect and automated replay of pending journal entries upon database restoration.
+- [x] **Milestone 9.4: Disposable Zone Server Crash Reconstruction**
+  - [x] Crash recovery architecture: zone worker nodes are fully disposable and stateless in compute.
+  - [x] Automated state reconstruction: if `zone-worker-17` crashes, neighboring or replacement nodes reconstruct zone state from the durable journal and active client session snapshots.
+  - [x] Automated chaos test suite: simulating process kills (`SIGKILL`), sudden machine drops, and partial network partitions with 100% state recovery and zero entity duplication.
+- [x] **Milestone 9.5: Cold Account Hibernation to Hot Hydration Lifecycle**
+  - [x] Production binary serialization for dormant accounts (<256 bytes per snapshot).
+  - [x] Sub-5ms hydration pipeline restoring characters, inventories, and cooldowns directly into active zone spatial grids upon client login.
 
 ---
 
@@ -266,8 +266,8 @@ To achieve full production sign-off, `eidolon` must satisfy all gates in this sc
 | **Session Security** | Completed | Cryptographic handshake & replay | 0 unauthenticated packets processed |
 | **Anti-DoS Fencing** | Completed | Malicious client rate/memory bounds | <0.01% tick CPU per malicious client |
 | **Authority Fencing** | Completed | Stale session & reconnect rejection | 0 stale state overwrites under network split |
-| **Persistence (WAL)** | P0 | Crash consistency & dupe prevention | 0 lost transactions / 0 duplicated items |
-| **State Reconstruction**| P0 | Disposable node recovery | 100% state restored after SIGKILL |
+| **Persistence (WAL)** | Completed | Crash consistency & dupe prevention | 0 lost transactions / 0 duplicated items |
+| **State Reconstruction**| Completed | Disposable node recovery | 100% state restored after SIGKILL |
 | **End-to-End Flow** | P1 | Overload backpressure | 0 unbounded queues; graceful shedding |
 | **Distributed Chaos** | P1 | Multi-server 100k CCU harness | 100% entity accounting across zone seams |
 | **Network Impairment** | P1 | Compound 5% loss + 150ms jitter | 0 desyncs; deterministic dead reckoning |

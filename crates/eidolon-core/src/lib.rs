@@ -9,6 +9,7 @@
 pub mod authority;
 pub mod fixed;
 pub mod kinematics;
+pub mod lock;
 pub mod quant;
 
 pub use authority::{AuthorityError, AuthorityFencer, AuthorityToken, AUTHORITY_TOKEN_LEN};
@@ -17,6 +18,7 @@ pub use kinematics::{
     extrapolate, reconcile_smooth, should_dispatch_update, DeadReckoningConfig, KinematicState,
     FLAG_FALLING, FLAG_IDLE, FLAG_IMMOBILIZED, FLAG_JUMPING, FLAG_SPRINTING, FLAG_WALKING,
 };
+pub use lock::{GenerationLockRegistry, LockEntry, LockError, LockToken, MAX_TRACKED_LOCKS};
 pub use quant::{
     QuantizedCellCoord, QuantizedYaw, CELL_HORIZONTAL_SIZE, CELL_VERTICAL_SIZE,
     HORIZONTAL_RESOLUTION_METERS, MAX_QUANTIZED_HORIZONTAL, MAX_QUANTIZED_VERTICAL,

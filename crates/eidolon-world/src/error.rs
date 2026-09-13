@@ -66,6 +66,48 @@ pub enum WorldError {
         /// Zone holding expired lease.
         zone_id: ZoneId,
     },
+    /// In-memory WAL ring buffer is at full capacity (storage backpressure).
+    WalBufferFull,
+    /// Durable WAL storage backend is unavailable (outage declared).
+    WalStorageUnavailable,
+    /// Encoded WAL record byte sequence is corrupted or truncated.
+    WalCorruptedRecord(&'static str),
+    /// WAL record checksum validation failed.
+    WalChecksumMismatch {
+        /// Expected checksum from record header.
+        expected: u32,
+        /// Calculated Adler-32 checksum from payload.
+        actual: u32,
+    },
+    /// Inbound WAL record LSN does not monotonically follow current LSN.
+    WalLsnRegression {
+        /// Current expected LSN.
+        current: u64,
+        /// Inbound record LSN.
+        incoming: u64,
+    },
+    /// Atomic transaction failed or rolled back.
+    TransactionAborted(&'static str),
+    /// Account balance is insufficient for transaction debit.
+    InsufficientBalance {
+        /// Required balance amount.
+        required: u64,
+        /// Available account balance.
+        actual: u64,
+    },
+    /// Item identifier not found in character inventory.
+    ItemNotFound(u32),
+    /// Transaction with this identifier has already been executed.
+    DuplicateTransaction(u64),
+    /// Stale session attempted to execute inventory mutation without active lock.
+    StaleSessionMutation {
+        /// Active session holding generation lock.
+        expected: u64,
+        /// Stale session attempting mutation.
+        actual: u64,
+    },
+    /// Disposable zone crash reconstruction failed.
+    ReconstructionFailed(&'static str),
 }
 
 impl fmt::Display for WorldError {
@@ -99,6 +141,39 @@ impl fmt::Display for WorldError {
             ),
             Self::LeaseExpired { lease_id, zone_id } => {
                 write!(f, "Boundary lease {lease_id} expired for {zone_id}")
+            }
+            Self::WalBufferFull => write!(f, "WAL in-memory ring buffer is at capacity"),
+            Self::WalStorageUnavailable => write!(f, "Durable WAL storage backend is unavailable"),
+            Self::WalCorruptedRecord(reason) => write!(f, "Corrupted WAL record: {reason}"),
+            Self::WalChecksumMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "WAL record checksum mismatch: expected {expected:#x}, got {actual:#x}"
+                )
+            }
+            Self::WalLsnRegression { current, incoming } => {
+                write!(
+                    f,
+                    "WAL LSN regression: current {current}, incoming {incoming}"
+                )
+            }
+            Self::TransactionAborted(reason) => write!(f, "Transaction aborted: {reason}"),
+            Self::InsufficientBalance { required, actual } => {
+                write!(
+                    f,
+                    "Insufficient balance: required {required}, available {actual}"
+                )
+            }
+            Self::ItemNotFound(id) => write!(f, "Item {id} not found in inventory"),
+            Self::DuplicateTransaction(id) => write!(f, "Duplicate transaction {id}"),
+            Self::StaleSessionMutation { expected, actual } => {
+                write!(
+                    f,
+                    "Stale session mutation rejected: active session {expected}, caller session {actual}"
+                )
+            }
+            Self::ReconstructionFailed(reason) => {
+                write!(f, "Zone crash reconstruction failed: {reason}")
             }
         }
     }

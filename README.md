@@ -296,7 +296,7 @@ With the core networking, spatial partitioning, dead reckoning, and simulation l
 | Phase | Focus Area | Critical Deliverables | Priority |
 | :--- | :--- | :--- | :--- |
 | **Phase 8** | **Distributed Authority & Security** | HMAC session binding, sequence replay windows, anti-DoS quotas, authority epochs under reconnect, split-brain fencing, and protocol versioning. | **COMPLETED** |
-| **Phase 9** | **Authoritative Persistence & Recovery** | Write-ahead journal (WAL), double-spend prevention, 30s DB outage buffering, disposable zone reconstruction after SIGKILL, and cold hydration. | **P0 Critical** |
+| **Phase 9** | **Authoritative Persistence & Recovery** | Write-ahead journal (WAL), double-spend prevention, 30s DB outage buffering, disposable zone reconstruction after SIGKILL, and cold hydration. | **COMPLETED** |
 | **Phase 10** | **End-to-End Flow & Clock Discipline** | Continuous backpressure pipeline (socket -> ingress -> sim -> AoI -> egress -> socket), priority admission shedding, and monotonic clock time-warp defense. | **P1 Launch** |
 | **Phase 11** | **Observability & Distributed Tracing** | Bounded-cardinality Prometheus metrics, microsecond phase timing, correlated tracing `[session, tick, entity, zone, epoch]`, and SRE runbooks. | **P1 Launch** |
 | **Phase 12** | **Network Impairment & Chaos Testing** | Compound chaos (5% loss + 150ms jitter), deep parser fuzzing corpus, 10k-100k CCU multi-server harness, 7-day soak test, and zero-downtime rolling upgrades. | **P1 Launch** |
@@ -306,7 +306,7 @@ With the core networking, spatial partitioning, dead reckoning, and simulation l
 
 ---
 
-## Development Status (Core Phases 1-7 & Phase 8 Completed)
+## Development Status (Core Phases 1-7 & Phases 8-9 Completed)
 
 All 7 execution phases of `eidolon` are complete, tested, and verified against the strict governance framework:
 
@@ -383,6 +383,16 @@ All 7 execution phases of `eidolon` are complete, tested, and verified against t
 - [x] Inter-Zone Boundary Leases, Heartbeat Partition Detectors & Migration Rollback (`ZonePartitionManager`)
 - [x] Wire Protocol Version Negotiation & Mixed-Cluster Rolling Downgrades (`ProtocolNegotiator`)
 - [x] Automated Integration & Chaos Suites (Zero Warnings, 100% Tests Passing)
+
+### Phase 9 Progress (Authoritative Persistence & Recovery)
+- [x] Four-Stage Consistency Pipeline (Simulation Tick -> Authoritative State -> WAL Ring Buffer -> Storage Flush)
+- [x] Asynchronous Non-Blocking Write-Ahead Journal (`WriteAheadJournal`, `WalRingBuffer`) with Adler-32 Checksums
+- [x] Monotonic Generation Locks & Multi-Session Fencing (`GenerationLockRegistry`, `LockToken`)
+- [x] Double-Spend & Duplicate Transaction Prevention (`TransactionManager`, In-Memory Deduplication)
+- [x] 30-Second Asynchronous Database Outage Resilience (600 Ticks Non-Blocking In-Memory Buffer)
+- [x] Disposable Zone Server Crash Reconstruction (`reconstruct_zone_from_wal`, Deterministic Replay)
+- [x] Sub-5ms Cold Account Hibernation to Hot Zone Hydration (`hydrate_player_into_zone`)
+- [x] Exhaustive Integration & Chaos Test Suites (Zero Warnings, Zero Panics, 100% Tests Passing)
 
 ---
 

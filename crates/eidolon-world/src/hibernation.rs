@@ -3,7 +3,11 @@
 //! Enables live-service and gacha game backends to scale to zero idle cost
 //! by persisting dormant player inventories and pity counters as compact (<1 KB) binary snapshots.
 
+use eidolon_core::fixed::Vec3Fix;
+
 use crate::error::WorldError;
+use crate::transaction::AccountState;
+use crate::zone::WorldZone;
 
 /// Protocol magic header for hibernated account snapshots ('E', 'I', 'H', 'B' -> 0x45, 0x49, 0x48, 0x42).
 pub const HIBERNATION_MAGIC: [u8; 4] = [0x45, 0x49, 0x48, 0x42];
@@ -303,6 +307,24 @@ impl PlayerProfile {
     }
 }
 
+/// Hydrates a cold player profile directly into an active zone's spatial grid and transaction state.
+///
+/// Spawns the player's primary character entity at the target position, returning the initialized account state.
+pub fn hydrate_player_into_zone(
+    profile: &PlayerProfile,
+    zone: &mut WorldZone,
+    spawn_pos: Vec3Fix,
+    entity_id: u32,
+) -> Result<AccountState, WorldError> {
+    zone.insert_entity(entity_id, spawn_pos)?;
+
+    let mut account_state = AccountState::new(profile.account_id);
+    account_state.premium_currency = profile.premium_currency;
+    account_state.free_currency = profile.free_currency;
+
+    Ok(account_state)
+}
+
 /// Computes a deterministic Adler-32 checksum without external dependencies.
 #[inline]
 pub fn compute_adler32(data: &[u8]) -> u32 {
@@ -380,5 +402,40 @@ mod tests {
 
         let result = PlayerProfile::deserialize_snapshot(&buffer[..len]);
         assert_eq!(result.unwrap_err(), WorldError::SnapshotCorrupted);
+    }
+
+    #[test]
+    fn test_hydrate_player_into_zone_spatial_and_wallet() {
+        use crate::error::ZoneId;
+        use crate::zone::{SeamAxis, ZoneBounds};
+        use eidolon_core::fixed::Fixed64;
+
+        let bounds = ZoneBounds::new(
+            Fixed64::from_i32(0),
+            Fixed64::from_i32(100),
+            Fixed64::from_i32(0),
+            Fixed64::from_i32(100),
+            SeamAxis::EastWest,
+            Fixed64::from_i32(84),
+            Fixed64::from_i32(100),
+        );
+        let mut zone = WorldZone::new(ZoneId(1), bounds, None, true, 64);
+
+        let mut profile = PlayerProfile::new(777);
+        profile.premium_currency = 5000;
+        profile.free_currency = 25000;
+
+        let spawn_pos = Vec3Fix::new(
+            Fixed64::from_i32(25),
+            Fixed64::from_i32(0),
+            Fixed64::from_i32(25),
+        );
+        let account_state = hydrate_player_into_zone(&profile, &mut zone, spawn_pos, 42)
+            .expect("Hydration must succeed");
+
+        assert_eq!(account_state.account_id, 777);
+        assert_eq!(account_state.premium_currency, 5000);
+        assert_eq!(account_state.free_currency, 25000);
+        assert_eq!(zone.spatial_grid.get_position(42), Some(spawn_pos));
     }
 }
