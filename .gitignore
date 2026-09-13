@@ -1,0 +1,94 @@
+# ==============================================================================
+# eidolon - .gitignore
+# ==============================================================================
+
+# --- Agent Governance, Directives, and Stealth Boundaries ---
+AGENTS.md
+agents.md
+Agents.md
+.agents/
+.agents-audit/
+*.agent.tmp
+*.agent.log
+*.agent.json
+*.prompt
+.gemini/
+.claude/
+
+# --- Rust & Cargo ---
+/target/
+**/*.rs.bk
+*.pdb
+
+# In Rust workspaces that produce deployable server binaries (like `eidolon-server`),
+# Cargo.lock is typically tracked in git to ensure bit-for-bit reproducible builds.
+# If you prefer to strictly treat this as an upstream library, uncomment the line below:
+# Cargo.lock
+
+# --- Environment, Secrets & Local Config ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*token*
+credentials.json
+
+# --- Network & Profiling Dumps ---
+# Useful when profiling server ticks or capturing Wireshark UDP packets
+*.pcap
+*.pcapng
+perf.data*
+flamegraph.svg
+*.profraw
+*.profdata
+callgrind.out.*
+massif.out.*
+
+# --- Local Databases & Hot State ---
+*.db
+*.sqlite
+*.sqlite3
+*.rdb
+dump.rdb
+
+# --- Scratch & Temporary Files ---
+scratch/
+tmp/
+temp/
+*.log
+
+# --- IDEs & Code Editors ---
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.iml
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*.swn
+*~
+
+# --- Operating System Files ---
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+desktop.ini
+
+# Linux
+*~
+.directory
