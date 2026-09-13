@@ -140,4 +140,25 @@ mod tests {
         assert_eq!(extrapolated.position.y, Fixed64::ZERO);
         assert_eq!(extrapolated.position.z, Fixed64::ZERO);
     }
+
+    #[test]
+    fn test_batch_distance_squared_4x_parity() {
+        let target = Vec3Fix::from_f64(10.0, 5.0, 20.0);
+        let origins = [
+            Vec3Fix::from_f64(0.0, 0.0, 0.0),
+            Vec3Fix::from_f64(10.0, 5.0, 20.0),
+            Vec3Fix::from_f64(-5.0, 15.0, 30.0),
+            Vec3Fix::from_f64(100.0, 50.0, 200.0),
+        ];
+
+        let batched = Vec3Fix::batch_distance_squared_4x(origins, target);
+
+        for (i, origin) in origins.iter().enumerate() {
+            let scalar = origin.distance_squared(target);
+            assert_eq!(
+                batched[i], scalar,
+                "Batch distance lane {i} must match scalar distance"
+            );
+        }
+    }
 }

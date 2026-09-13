@@ -6,12 +6,16 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod companion;
 pub mod error;
 pub mod hibernation;
 pub mod instance;
 pub mod zone;
 
 // Re-export primary types for ergonomic crate consumption.
+pub use companion::{
+    AssetManifestDigest, PatchNegotiationState, PatchNegotiator, ZoneAssetRequirement,
+};
 pub use error::{InstanceId, WorldError, ZoneId};
 pub use hibernation::{
     compute_adler32, CharacterRecord, HibernationHeader, PityState, PlayerProfile,

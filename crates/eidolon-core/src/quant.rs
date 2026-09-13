@@ -53,37 +53,29 @@ impl QuantizedCellCoord {
 
     /// Quantizes local cell continuous coordinates (0..64m horizontal, 0..32m vertical).
     pub fn quantize(local_x: Fixed64, local_y: Fixed64, local_z: Fixed64) -> Self {
-        // Clamp to positive cell bounds
+        // Clamp to positive cell bounds branchlessly
         let x_clamped = local_x.clamp(Fixed64::ZERO, CELL_HORIZONTAL_SIZE);
         let y_clamped = local_y.clamp(Fixed64::ZERO, CELL_VERTICAL_SIZE);
         let z_clamped = local_z.clamp(Fixed64::ZERO, CELL_HORIZONTAL_SIZE);
 
-        let q_x = if x_clamped >= CELL_HORIZONTAL_SIZE {
-            MAX_QUANTIZED_HORIZONTAL
-        } else {
-            let ratio = x_clamped.saturating_div(CELL_HORIZONTAL_SIZE);
-            (ratio.saturating_mul(Fixed64::from_i32(MAX_QUANTIZED_HORIZONTAL as i32))).to_i32()
-                as u16
-        };
+        let q_x = (x_clamped.saturating_div(CELL_HORIZONTAL_SIZE))
+            .saturating_mul(Fixed64::from_i32(MAX_QUANTIZED_HORIZONTAL as i32))
+            .to_i32()
+            .min(MAX_QUANTIZED_HORIZONTAL as i32) as u16;
 
-        let q_y = if y_clamped >= CELL_VERTICAL_SIZE {
-            MAX_QUANTIZED_VERTICAL
-        } else {
-            let ratio = y_clamped.saturating_div(CELL_VERTICAL_SIZE);
-            (ratio.saturating_mul(Fixed64::from_i32(MAX_QUANTIZED_VERTICAL as i32))).to_i32() as u16
-        };
+        let q_y = (y_clamped.saturating_div(CELL_VERTICAL_SIZE))
+            .saturating_mul(Fixed64::from_i32(MAX_QUANTIZED_VERTICAL as i32))
+            .to_i32()
+            .min(MAX_QUANTIZED_VERTICAL as i32) as u16;
 
-        let q_z = if z_clamped >= CELL_HORIZONTAL_SIZE {
-            MAX_QUANTIZED_HORIZONTAL
-        } else {
-            let ratio = z_clamped.saturating_div(CELL_HORIZONTAL_SIZE);
-            (ratio.saturating_mul(Fixed64::from_i32(MAX_QUANTIZED_HORIZONTAL as i32))).to_i32()
-                as u16
-        };
+        let q_z = (z_clamped.saturating_div(CELL_HORIZONTAL_SIZE))
+            .saturating_mul(Fixed64::from_i32(MAX_QUANTIZED_HORIZONTAL as i32))
+            .to_i32()
+            .min(MAX_QUANTIZED_HORIZONTAL as i32) as u16;
 
         Self {
             x: q_x,
-            y: q_y.min(MAX_QUANTIZED_VERTICAL),
+            y: q_y,
             z: q_z,
         }
     }

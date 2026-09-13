@@ -145,16 +145,10 @@ impl Fixed64 {
         Self(self.0.saturating_abs())
     }
 
-    /// Clamps value between min and max bounds.
+    /// Clamps value between min and max bounds branchlessly using hardware conditional move.
     #[inline]
     pub fn clamp(self, min: Self, max: Self) -> Self {
-        if self.0 < min.0 {
-            min
-        } else if self.0 > max.0 {
-            max
-        } else {
-            self
-        }
+        Self(self.0.clamp(min.0, max.0))
     }
 
     /// Returns the minimum of self and other.
@@ -399,6 +393,36 @@ impl Vec3Fix {
     #[inline]
     pub fn distance_squared(self, other: Self) -> Fixed64 {
         (self - other).magnitude_squared()
+    }
+
+    /// Computes the squared distances from 4 origin points to a common target point in parallel.
+    ///
+    /// Structured as an unrolled 4-wide batch allowing LLVM to auto-vectorize
+    /// arithmetic across SIMD vector registers (NEON / AVX2).
+    #[inline]
+    pub fn batch_distance_squared_4x(origins: [Self; 4], target: Self) -> [Fixed64; 4] {
+        let dx0 = origins[0].x - target.x;
+        let dy0 = origins[0].y - target.y;
+        let dz0 = origins[0].z - target.z;
+
+        let dx1 = origins[1].x - target.x;
+        let dy1 = origins[1].y - target.y;
+        let dz1 = origins[1].z - target.z;
+
+        let dx2 = origins[2].x - target.x;
+        let dy2 = origins[2].y - target.y;
+        let dz2 = origins[2].z - target.z;
+
+        let dx3 = origins[3].x - target.x;
+        let dy3 = origins[3].y - target.y;
+        let dz3 = origins[3].z - target.z;
+
+        [
+            (dx0 * dx0) + (dy0 * dy0) + (dz0 * dz0),
+            (dx1 * dx1) + (dy1 * dy1) + (dz1 * dz1),
+            (dx2 * dx2) + (dy2 * dy2) + (dz2 * dz2),
+            (dx3 * dx3) + (dy3 * dy3) + (dz3 * dz3),
+        ]
     }
 
     /// Returns the Euclidean distance between two points.

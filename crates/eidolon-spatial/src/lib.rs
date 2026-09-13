@@ -139,4 +139,38 @@ mod tests {
         assert!(scheduler.should_replicate(FrequencyTier::Immediate, 2, false));
         assert!(!scheduler.should_replicate(FrequencyTier::Mid, 20, false));
     }
+
+    #[test]
+    fn test_query_radius_squared_batched_parity() {
+        let mut grid = SpatialHashGrid::with_capacity(100, 64);
+        let center = Vec3Fix::from_f64(30.0, 10.0, 30.0);
+
+        // Insert 15 entities at various positions
+        for i in 1..=15 {
+            let offset = (i as f64) * 3.0;
+            let pos = Vec3Fix::from_f64(30.0 + offset, 10.0, 30.0);
+            assert!(grid.insert(i, pos).is_ok());
+        }
+
+        let radius_sq = Fixed64::from_i32(400); // 20m radius (20^2 = 400)
+        let mut scalar_results = [0u32; 32];
+        let mut batched_results = [0u32; 32];
+
+        let scalar_count = grid.query_radius_squared(center, radius_sq, &mut scalar_results);
+        let batched_count =
+            grid.query_radius_squared_batched(center, radius_sq, &mut batched_results);
+
+        assert_eq!(
+            scalar_count, batched_count,
+            "Batched query count must match scalar query count"
+        );
+        let mut scalar_matched = scalar_results[..scalar_count].to_vec();
+        let mut batched_matched = batched_results[..batched_count].to_vec();
+        scalar_matched.sort_unstable();
+        batched_matched.sort_unstable();
+        assert_eq!(
+            scalar_matched, batched_matched,
+            "Batched query matches must be identical to scalar query"
+        );
+    }
 }

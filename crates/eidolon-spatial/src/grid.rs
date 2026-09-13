@@ -325,6 +325,78 @@ impl SpatialHashGrid {
         matched_count
     }
 
+    /// Queries active entities within a squared radius of the center point using 4-wide SIMD batching.
+    ///
+    /// Batches candidate entity position checks into 4-wide parallel distance evaluations,
+    /// enabling SIMD auto-vectorization across high-density spatial cells.
+    /// Matches are written directly into `output_buffer` without heap allocation.
+    pub fn query_radius_squared_batched(
+        &self,
+        center: Vec3Fix,
+        radius_sq: Fixed64,
+        output_buffer: &mut [u32],
+    ) -> usize {
+        let center_cell = CellCoord::from_position(center);
+        let mut matched_count = 0;
+
+        let mut batch_candidates = [0u32; 4];
+        let mut batch_positions = [Vec3Fix::ZERO; 4];
+        let mut batch_len = 0;
+
+        // 3x3 cell neighborhood iteration around observer
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                for dy in -1..=1 {
+                    let neighbor_cell =
+                        CellCoord::new(center_cell.x + dx, center_cell.y + dy, center_cell.z + dz);
+                    let key = neighbor_cell.spatial_key();
+                    let bucket = (key as usize) & self.bucket_mask;
+
+                    let mut curr = self.bucket_heads[bucket];
+                    while curr != TERMINAL_INDEX {
+                        let curr_idx = curr as usize;
+                        if self.entity_keys[curr_idx] == key && self.active_mask[curr_idx] {
+                            batch_candidates[batch_len] = curr;
+                            batch_positions[batch_len] = self.positions[curr_idx];
+                            batch_len += 1;
+
+                            if batch_len == 4 {
+                                let dists =
+                                    Vec3Fix::batch_distance_squared_4x(batch_positions, center);
+                                for i in 0..4 {
+                                    if dists[i] <= radius_sq {
+                                        if matched_count < output_buffer.len() {
+                                            output_buffer[matched_count] = batch_candidates[i];
+                                        }
+                                        matched_count += 1;
+                                    }
+                                }
+                                batch_len = 0;
+                            }
+                        }
+                        curr = self.next_in_cell[curr_idx];
+                    }
+                }
+            }
+        }
+
+        // Process remaining tail candidates
+        if batch_len > 0 {
+            batch_positions[batch_len..4].fill(center);
+            let dists = Vec3Fix::batch_distance_squared_4x(batch_positions, center);
+            for i in 0..batch_len {
+                if dists[i] <= radius_sq {
+                    if matched_count < output_buffer.len() {
+                        output_buffer[matched_count] = batch_candidates[i];
+                    }
+                    matched_count += 1;
+                }
+            }
+        }
+
+        matched_count
+    }
+
     /// Counts active entities residing in a specific cell.
     pub fn cell_entity_count(&self, cell: CellCoord) -> usize {
         let key = cell.spatial_key();
