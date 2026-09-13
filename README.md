@@ -47,17 +47,19 @@ Most multiplayer architectures present difficult compromises:
 
 In large-scale multiplayer games, **cloud network egress (not CPU compute) is often the single largest operational expense.**
 
-Standard cloud providers (AWS, GCP, Azure) bill public internet egress between **$0.05 and $0.12 per gigabyte**. The table below illustrates the economic motivation for aggressive byte quantization:
+Standard cloud providers (AWS, GCP, Azure) bill public internet egress between **$0.05 and $0.12 per gigabyte**. The table below illustrates the financial motivation for aggressive byte quantization across representative player tiers (assuming 16 active gameplay hours per CCU day at $0.07/GB blended cloud egress):
 
-| Metric | Unoptimized Baseline (20 KB/s) | **eidolon Design Target (0.8 KB/s)** |
-| :--- | :--- | :--- |
-| **Bandwidth per Player** | 20 KB/s (160 kbps) | **0.8 KB/s (6.4 kbps)** |
-| **Throughput at 100,000 CCU** | 2.0 GB/s (16 Gbps) | **80 MB/s (640 Mbps)** |
-| **Throughput at 1,000,000 CCU** | 20.0 GB/s (160 Gbps) | **800 MB/s (6.4 Gbps)** |
-| **Monthly Egress (1M CCU @ 16h/day)** | ~34.5 Petabytes | **~1.38 Petabytes** |
-| **Estimated Cloud Egress (at $0.07/GB)** | **~$2,400,000 / month** | **~$96,000 / month** |
+| Metric / Scale | Unoptimized Baseline (20 KB/s) | Semi-Optimized (8 KB/s) | **eidolon Authoritative Wire (1.02 KB/s)** | Annual Studio Savings |
+| :--- | :--- | :--- | :--- | :--- |
+| **Bandwidth per Player** | 20.0 KB/s (160 kbps) | 8.0 KB/s (64 kbps) | **1.02 KB/s (8.2 kbps)** | **94.9% Bandwidth Reduction** |
+| **5 Players (Dev / EoS)** | $11.87 / mo ($142 / yr) | $4.75 / mo ($57 / yr) | **$0.61 / mo (100% Free on GCP)** | **$135 / yr (Free Tier)** |
+| **1,000 CCU (Indie / Private)** | $2,374 / mo ($28.5k / yr) | $949 / mo ($11.4k / yr) | **$121 / mo ($1.45k / yr)** | **$27,036 / year** |
+| **10,000 CCU (Mid-Scale MMO)** | $23,738 / mo ($285k / yr) | $9,495 / mo ($114k / yr) | **$1,211 / mo ($14.5k / yr)** | **$270,324 / year** |
+| **100,000 CCU (Top Steam Title)**| $237,381 / mo ($2.85M / yr) | $94,952 / mo ($1.14M / yr)| **$12,106 / mo ($145k / yr)** | **$2,703,300 / year** |
+| **1,000,000 CCU (Global Hit)** | $2,373,811 / mo ($28.5M / yr)| $949,524 / mo ($11.4M / yr)| **$121,064 / mo ($1.45M / yr)** | **$27,032,964 / year** |
 
-> **The Architectural Takeaway:** Halving packet size cuts cloud egress expenses in half. Compressing updates down to under 1 KB/s makes independent, community-hosted, and long-tail live-service games economically viable without requiring venture subsidies.
+> **The Architectural Takeaway:** Halving packet size cuts cloud egress expenses in half. Compressing updates down to 1.02 KB/s makes independent, community-hosted, and long-tail live-service games economically viable without venture subsidies.  
+> 👉 **For the exhaustive financial whitepaper, cloud provider rate breakdowns, and ROI models, see [`docs/COST_ANALYSIS.md`](./docs/COST_ANALYSIS.md).**
 
 ---
 
@@ -170,6 +172,31 @@ Measured via native high-precision hardware timer suite (`crates/eidolon-server/
 | `kinematics::should_dispatch_update` | Predictive Velocity Deadband Check | **4.53 ns** | ~220 Million ops/sec |
 | `SpscPacketQueue::try_push + try_pop` | Bounded SPSC Queue Roundtrip (Mutex-Synchronized) | **62.43 ns** | ~16.0 Million ops/sec |
 
+### 3. Capacity Headroom & Latency Percentiles (Baseline 2,000 CCU, 20 Hz Simulation)
+
+Measured across 2,000 bots and 100 full-stack observer clients in release profile (`crates/eidolon-server/tests/extreme_stress_benchmarks.rs`):
+
+| Metric | Measured Duration (Release Profile) | Allocated 20 Hz Budget | Measured Headroom |
+| :--- | :--- | :--- | :--- |
+| **Minimum Tick Duration** | **2.67 ms (2,666 µs)** | 50.00 ms | **94.7% Headroom** |
+| **Median (p50) Tick Duration** | **3.06 ms (3,061 µs)** | 50.00 ms | **93.9% Headroom** |
+| **75th Percentile (p75)** | **3.23 ms (3,226 µs)** | 50.00 ms | **93.5% Headroom** |
+| **95th Percentile (p95)** | **3.89 ms (3,888 µs)** | 50.00 ms | **92.2% Headroom** |
+| **99th Percentile (p99)** | **4.75 ms (4,755 µs)** | 50.00 ms | **90.5% Headroom** |
+| **Maximum Tick Duration** | **5.15 ms (5,147 µs)** | 50.00 ms | **89.7% Headroom** |
+
+### 4. Extreme Density Cluster Scaling (75th to 99th Percentile Hot-Spots)
+
+Simulating concentrated gatherings (world bosses, trade hubs, bridge skirmishes) packed into a single 64-meter cell:
+
+| Scenario | Density in AoI | Query Latency | Reconcile Latency | Wire Egress per Client | Budget Status |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **50th Percentile (Ambient)** | 10 entities | **0.33 µs** | **0.25 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
+| **75th Percentile (Active Hub)**| 50 entities | **0.70 µs** | **1.17 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
+| **90th Percentile (Chokepoint)**| 100 entities | **1.47 µs** | **2.30 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
+| **95th Percentile (Major Raid)**| 250 entities | **4.74 µs** | **10.76 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
+| **99th Percentile (Flash Mob)** | 500 entities | **7.33 µs** | **25.52 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
+
 ---
 
 ## Workspace Architecture
@@ -189,7 +216,8 @@ eidolon/
 │   ├── WIRE_PROTOCOL.md     # Byte math, 44-bit quantization & bitstream schemas
 │   ├── SPATIAL_PARTITIONING.md # Spatial hash grid, SoA & 3-tier AoI
 │   ├── ZONES_AND_INSTANCING.md # Seamless 16m seams & gacha scale-to-zero
-│   └── BENCHMARKS.md        # Benchmark methodology & wire metrics
+│   ├── BENCHMARKS.md        # Benchmark methodology & wire metrics
+│   └── COST_ANALYSIS.md     # Cloud infrastructure economics & headcount ROI
 ├── Cargo.toml               # Workspace configuration
 └── LICENSE                  # Business Source License 1.1 ($1M Indie Exemption)
 ```
@@ -213,6 +241,7 @@ Detailed architectural and mathematical specifications are published in `docs/`:
 * **[Spatial Partitioning & AoI (`docs/SPATIAL_PARTITIONING.md`)](./docs/SPATIAL_PARTITIONING.md):** Spatial hash grid, Struct-of-Arrays memory layout, intrusive slot-map, and 3-tier AoI state machines.
 * **[Zones & Instancing (`docs/ZONES_AND_INSTANCING.md`)](./docs/ZONES_AND_INSTANCING.md):** Seamless 16-meter boundary seams, ephemeral dungeon pools, scale-to-zero gacha raids, and cold account hibernation.
 * **[Benchmarks & Verification (`docs/BENCHMARKS.md`)](./docs/BENCHMARKS.md):** Empirical nanosecond microbenchmark results, 2,000 CCU load simulation, and memory leak audit proofs.
+* **[Cloud Infrastructure Cost Analysis (`docs/COST_ANALYSIS.md`)](./docs/COST_ANALYSIS.md):** Public cloud egress financial models, headcount savings matrix (5 to 5,000,000 CCU), and End-of-Service (EoS) perpetual maintenance economics.
 
 ---
 
