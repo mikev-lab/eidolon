@@ -200,6 +200,14 @@ For the full legal parameters, please review the [LICENSE](./LICENSE) file.
 - [x] Automated Governance & Compliance Test Harness (`compliance.rs`)
 - [x] GitHub Actions CI Workflow (`.github/workflows/ci.yml`)
 
+### Phase 2 Progress (Core Wire Math & Kinematics)
+- [x] Deterministic 32.32 Fixed-Point Math (`Fixed64`, `Vec3Fix`)
+- [x] Asymmetric Coordinate Quantization (16-bit X/Z, 12-bit Y)
+- [x] 1-Byte Discrete Heading & Shortest-Arc Rollover (`QuantizedYaw`)
+- [x] Compact 7-Byte Wire Bitpacking (Coordinates + Yaw + Flags)
+- [x] Second-Order Intent Dead Reckoning & Extrapolation FSM
+- [x] Tier 1 Deterministic Parity & 10,000-Tick Verification Suite
+
 ---
 
 <div align="center">

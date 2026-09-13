@@ -6,135 +6,138 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
-/// Fixed-point numerical representations and deterministic vector primitives.
-pub mod fixed {
-    /// 32.32 fixed-point integer representation for deterministic cross-platform simulation.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
-    pub struct Fixed64(pub i64);
+pub mod fixed;
+pub mod kinematics;
+pub mod quant;
 
-    impl Fixed64 {
-        /// Scaling factor: 2^32.
-        pub const FRACTIONAL_BITS: u32 = 32;
-        /// Zero constant.
-        pub const ZERO: Self = Self(0);
-        /// One constant.
-        pub const ONE: Self = Self(1 << Self::FRACTIONAL_BITS);
-
-        /// Creates a fixed-point value from an integer.
-        #[inline]
-        pub const fn from_i32(val: i32) -> Self {
-            Self((val as i64) << Self::FRACTIONAL_BITS)
-        }
-
-        /// Returns the raw underlying 64-bit integer representation.
-        #[inline]
-        pub const fn raw(self) -> i64 {
-            self.0
-        }
-    }
-
-    /// Fixed-point 3D vector.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-    pub struct Vec3Fix {
-        /// X coordinate.
-        pub x: Fixed64,
-        /// Y coordinate (elevation).
-        pub y: Fixed64,
-        /// Z coordinate.
-        pub z: Fixed64,
-    }
-
-    impl Vec3Fix {
-        /// Zero vector constant.
-        pub const ZERO: Self = Self {
-            x: Fixed64::ZERO,
-            y: Fixed64::ZERO,
-            z: Fixed64::ZERO,
-        };
-
-        /// Creates a new vector with the given fixed-point coordinates.
-        #[inline]
-        pub const fn new(x: Fixed64, y: Fixed64, z: Fixed64) -> Self {
-            Self { x, y, z }
-        }
-    }
-}
-
-/// Bounded integer coordinate and orientation quantization tables.
-pub mod quant {
-    /// Quantized 3D local cell-relative coordinates.
-    ///
-    /// Stores horizontal X and Z as 16-bit integers and elevation Y as a 12-bit integer,
-    /// achieving sub-millimeter precision across a 64-meter cell.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-    pub struct QuantizedCellCoord {
-        /// Quantized X offset within the local cell (0..=65535).
-        pub x: u16,
-        /// Quantized vertical elevation within the vertical cell band (0..=4095).
-        pub y: u16,
-        /// Quantized Z offset within the local cell (0..=65535).
-        pub z: u16,
-    }
-
-    /// Quantized discrete yaw heading (256 discrete angles covering 360 degrees).
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-    pub struct QuantizedYaw(pub u8);
-
-    impl QuantizedYaw {
-        /// Creates a quantized yaw from a single byte.
-        #[inline]
-        pub const fn from_byte(val: u8) -> Self {
-            Self(val)
-        }
-
-        /// Returns the raw discrete angle byte.
-        #[inline]
-        pub const fn as_byte(self) -> u8 {
-            self.0
-        }
-    }
-}
-
-/// Kinematics and intent-based dead reckoning state models.
-pub mod kinematics {
-    use crate::fixed::Vec3Fix;
-    use crate::quant::QuantizedYaw;
-
-    /// State descriptor representing entity movement intent.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-    pub struct MovementIntent {
-        /// Velocity vector expressed in fixed-point units per second.
-        pub velocity: Vec3Fix,
-        /// Current discrete facing direction.
-        pub yaw: QuantizedYaw,
-        /// Intent movement flags (e.g. running, jumping, crouched).
-        pub flags: u8,
-    }
-}
+pub use fixed::{Fixed64, Vec3Fix};
+pub use kinematics::{
+    extrapolate, reconcile_smooth, should_dispatch_update, DeadReckoningConfig, KinematicState,
+    FLAG_FALLING, FLAG_IDLE, FLAG_IMMOBILIZED, FLAG_JUMPING, FLAG_SPRINTING, FLAG_WALKING,
+};
+pub use quant::{
+    QuantizedCellCoord, QuantizedYaw, CELL_HORIZONTAL_SIZE, CELL_VERTICAL_SIZE,
+    HORIZONTAL_RESOLUTION_METERS, MAX_QUANTIZED_HORIZONTAL, MAX_QUANTIZED_VERTICAL,
+    VERTICAL_RESOLUTION_METERS,
+};
 
 #[cfg(test)]
 mod tests {
-    use super::fixed::{Fixed64, Vec3Fix};
-    use super::quant::QuantizedYaw;
+    use super::*;
 
     #[test]
-    fn test_fixed64_constants() {
-        assert_eq!(Fixed64::ZERO.raw(), 0);
-        assert_eq!(Fixed64::ONE.raw(), 1 << 32);
-        assert_eq!(Fixed64::from_i32(5).raw(), 5 << 32);
+    fn test_fixed64_basic_operations() {
+        let a = Fixed64::from_i32(10);
+        let b = Fixed64::from_i32(3);
+
+        assert_eq!((a + b).to_i32(), 13);
+        assert_eq!((a - b).to_i32(), 7);
+        assert_eq!((a * b).to_i32(), 30);
+        assert_eq!((a / b).to_i32(), 3);
     }
 
     #[test]
-    fn test_vec3fix_zero() {
-        let v = Vec3Fix::ZERO;
-        assert_eq!(v.x, Fixed64::ZERO);
-        assert_eq!(v.y, Fixed64::ZERO);
-        assert_eq!(v.z, Fixed64::ZERO);
+    fn test_fixed64_sqrt() {
+        let val = Fixed64::from_f64(16.0);
+        let root = val.sqrt();
+        assert!((root.to_f64() - 4.0).abs() < 0.0001);
+
+        let val_2 = Fixed64::from_f64(2.0);
+        let root_2 = val_2.sqrt();
+        assert!((root_2.to_f64() - core::f64::consts::SQRT_2).abs() < 0.0001);
+
+        assert_eq!(Fixed64::ZERO.sqrt(), Fixed64::ZERO);
+        assert_eq!(Fixed64::from_i32(-5).sqrt(), Fixed64::ZERO);
     }
 
     #[test]
-    fn test_quantized_yaw_byte() {
-        let yaw = QuantizedYaw::from_byte(128);
-        assert_eq!(yaw.as_byte(), 128);
+    fn test_vec3fix_linear_algebra() {
+        let v1 = Vec3Fix::new(
+            Fixed64::from_i32(1),
+            Fixed64::from_i32(2),
+            Fixed64::from_i32(3),
+        );
+        let v2 = Vec3Fix::new(
+            Fixed64::from_i32(4),
+            Fixed64::from_i32(5),
+            Fixed64::from_i32(6),
+        );
+
+        let sum = v1 + v2;
+        assert_eq!(sum.x.to_i32(), 5);
+        assert_eq!(sum.y.to_i32(), 7);
+        assert_eq!(sum.z.to_i32(), 9);
+
+        // Dot product: 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32
+        assert_eq!(v1.dot(v2).to_i32(), 32);
+
+        // Cross product: (2*6 - 3*5, 3*4 - 1*6, 1*5 - 2*4) = (-3, 6, -3)
+        let cross = v1.cross(v2);
+        assert_eq!(cross.x.to_i32(), -3);
+        assert_eq!(cross.y.to_i32(), 6);
+        assert_eq!(cross.z.to_i32(), -3);
+    }
+
+    #[test]
+    fn test_quantization_roundtrip() {
+        let pos = Vec3Fix::from_f64(32.0, 16.0, 48.0);
+        let quantized = QuantizedCellCoord::quantize(pos.x, pos.y, pos.z);
+
+        assert!(quantized.is_valid());
+        let reconstructed = quantized.dequantize();
+
+        // Check sub-millimeter precision horizontally and <1cm elevation
+        assert!((reconstructed.x.to_f64() - 32.0).abs() < 0.002);
+        assert!((reconstructed.y.to_f64() - 16.0).abs() < 0.01);
+        assert!((reconstructed.z.to_f64() - 48.0).abs() < 0.002);
+    }
+
+    #[test]
+    fn test_wire_bitpacking_7_bytes() {
+        let original_coord = QuantizedCellCoord::new(12345, 2048, 54321);
+        let original_yaw = QuantizedYaw::from_degrees(180.0);
+        let original_flags = FLAG_SPRINTING | FLAG_JUMPING;
+
+        let packed = original_coord.pack_with_yaw_and_flags(original_yaw, original_flags);
+        assert_eq!(packed.len(), 7);
+
+        let (unpacked_coord, unpacked_yaw, unpacked_flags) =
+            QuantizedCellCoord::unpack_with_yaw_and_flags(packed);
+
+        assert_eq!(unpacked_coord.x, original_coord.x);
+        assert_eq!(unpacked_coord.y, original_coord.y);
+        assert_eq!(unpacked_coord.z, original_coord.z);
+        assert_eq!(unpacked_yaw, original_yaw);
+        assert_eq!(unpacked_flags, original_flags & 0x0F);
+    }
+
+    #[test]
+    fn test_yaw_shortest_arc_rollover() {
+        let north = QuantizedYaw::NORTH; // 0
+        let slightly_west = QuantizedYaw::from_byte(250); // 6 steps clockwise of North
+
+        // Shortest arc from slightly_west to north should be +6 (turning counter-clockwise)
+        assert_eq!(slightly_west.shortest_arc_delta(north), 6);
+        // Shortest arc from north to slightly_west should be -6 (turning clockwise)
+        assert_eq!(north.shortest_arc_delta(slightly_west), -6);
+    }
+
+    #[test]
+    fn test_dead_reckoning_extrapolation() {
+        let tick_duration = Fixed64::from_f64(0.05); // 20 Hz = 50ms
+        let initial_state = KinematicState {
+            position: Vec3Fix::ZERO,
+            velocity: Vec3Fix::from_f64(10.0, 0.0, 0.0), // 10 m/s in X
+            acceleration: Vec3Fix::ZERO,
+            yaw: QuantizedYaw::EAST,
+            angular_velocity: 0,
+            flags: FLAG_WALKING,
+        };
+
+        // Extrapolate 20 ticks = 1.0 second
+        let extrapolated = extrapolate(&initial_state, 20, tick_duration);
+        assert!((extrapolated.position.x.to_f64() - 10.0).abs() < 0.01);
+        assert_eq!(extrapolated.position.y, Fixed64::ZERO);
+        assert_eq!(extrapolated.position.z, Fixed64::ZERO);
     }
 }
