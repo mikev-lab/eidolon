@@ -185,17 +185,20 @@ Measured across 2,000 bots and 100 full-stack observer clients in release profil
 | **99th Percentile (p99)** | **4.75 ms (4,755 µs)** | 50.00 ms | **90.5% Headroom** |
 | **Maximum Tick Duration** | **5.15 ms (5,147 µs)** | 50.00 ms | **89.7% Headroom** |
 
-### 4. Extreme Density Cluster Scaling (75th to 99th Percentile Hot-Spots)
+### 4. Extreme Density Cluster Scaling: Unclamped Demand vs. Scheduled Output
 
-Simulating concentrated gatherings (world bosses, trade hubs, bridge skirmishes) packed into a single 64-meter cell:
+Simulating concentrated gatherings (world bosses, trade hubs, bridge skirmishes) packed into a single 64-meter cell, contrasting raw 20 Hz broadcast demand against `eidolon` scheduled egress:
 
-| Scenario | Density in AoI | Query Latency | Reconcile Latency | Wire Egress per Client | Budget Status |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **50th Percentile (Ambient)** | 10 entities | **0.33 µs** | **0.25 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
-| **75th Percentile (Active Hub)**| 50 entities | **0.70 µs** | **1.17 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
-| **90th Percentile (Chokepoint)**| 100 entities | **1.47 µs** | **2.30 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
-| **95th Percentile (Major Raid)**| 250 entities | **4.74 µs** | **10.76 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
-| **99th Percentile (Flash Mob)** | 500 entities | **7.33 µs** | **25.52 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
+| Scenario | Density in AoI | Query | Reconcile | Unclamped Demand (20 Hz) | `eidolon` Scheduled Output | Traffic Suppression | Budget Status |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Sparse Encounter** | 5 entities | **0.33 µs** | **0.19 µs** | 1,900 B/s (1.9 KB/s) | **950.00 B/s (0.93 KB/s)** | **50.0%** | Conforms (<1.2 KB/s) |
+| **50th % (Ambient)** | 10 entities | **0.49 µs** | **0.41 µs** | 3,000 B/s (2.9 KB/s) | **1,170.00 B/s (1.14 KB/s)** | **61.0%** | Conforms (<1.2 KB/s) |
+| **75th % (Active Hub)**| 50 entities | **1.63 µs** | **1.85 µs** | 11,800 B/s (11.5 KB/s) | **1,170.00 B/s (1.14 KB/s)** | **90.1%** | Conforms (<1.2 KB/s) |
+| **90th % (Chokepoint)**| 100 entities | **1.37 µs** | **2.23 µs** | 22,800 B/s (22.3 KB/s) | **1,170.00 B/s (1.14 KB/s)** | **94.9%** | Conforms (<1.2 KB/s) |
+| **95th % (Major Raid)**| 250 entities | **3.09 µs** | **7.08 µs** | 55,800 B/s (54.5 KB/s) | **1,170.00 B/s (1.14 KB/s)** | **97.9%** | Conforms (<1.2 KB/s) |
+| **99th % (Flash Mob)** | 500 entities | **6.11 µs** | **19.11 µs** | 110,800 B/s (108.2 KB/s) | **1,170.00 B/s (1.14 KB/s)** | **98.9%** | Conforms (<1.2 KB/s) |
+
+*Hardware Environment: Apple M4 (10 cores, NEON SIMD), macOS Darwin 24.3.0 arm64, `rustc 1.98.1` (`--release`). All hot tick simulation paths execute with zero runtime heap allocations. See [`docs/BENCHMARKS.md`](./docs/BENCHMARKS.md) for complete hardware disclosure.*
 
 ---
 
@@ -217,14 +220,15 @@ eidolon/
 │   ├── SPATIAL_PARTITIONING.md # Spatial hash grid, SoA & 3-tier AoI
 │   ├── ZONES_AND_INSTANCING.md # Seamless 16m seams & gacha scale-to-zero
 │   ├── BENCHMARKS.md        # Benchmark methodology & wire metrics
-│   └── COST_ANALYSIS.md     # Cloud infrastructure economics & headcount ROI
+│   ├── COST_ANALYSIS.md     # Cloud infrastructure economics & headcount ROI
+│   └── OPERATIONS_AND_SECURITY.md # Threat modeling, SRE observability & protocol evolution
 ├── Cargo.toml               # Workspace configuration
 └── LICENSE                  # Business Source License 1.1 ($1M Indie Exemption)
 ```
 
 | Crate | Production Responsibilities |
 | :--- | :--- |
-| **`eidolon-core`** | Fixed-point vector algebra (`Vec3Fix`), 4-wide SIMD batch distance, 44-bit asymmetric coordinate quantizers, 1-byte yaw, and dead reckoning extrapolation. Designed to be imported by game clients (Bevy, Unreal via FFI, WebAssembly) for bit-exact client-side prediction. |
+| **`eidolon-core`** | The deterministic bedrock. IEEE 754 float-free arithmetic, 32.32 fixed-point vectors (`Fixed64`, `Vec3Fix`), 44-bit coordinate quantization, 1-byte yaw, and intent dead reckoning with zero drift. |
 | **`eidolon-net`** | Low-latency UDP transport layer. Register-width bitstreams, 12-byte zero-copy packet framing, sequenced unreliable channels, ordered reliable channels with sliding-window selective ACKs, and bounded ring buffers. |
 | **`eidolon-spatial`** | Cache-conscious 2D/3D spatial hash grid with 64-byte aligned bucket headers, intrusive slot-map indexing, 4-wide SIMD batched radius queries, and dynamic 3-tier AoI frequency state machines. |
 | **`eidolon-world`** | The world manager. Coordinates seamless zone boundaries with 16m overlapping seams, atomic in-memory entity handoffs, ephemeral dungeon instances (<50ms lifecycle), cold-state account hibernation, and `pak-delta` micro-patching negotiation. |
@@ -242,6 +246,7 @@ Detailed architectural and mathematical specifications are published in `docs/`:
 * **[Zones & Instancing (`docs/ZONES_AND_INSTANCING.md`)](./docs/ZONES_AND_INSTANCING.md):** Seamless 16-meter boundary seams, ephemeral dungeon pools, scale-to-zero gacha raids, and cold account hibernation.
 * **[Benchmarks & Verification (`docs/BENCHMARKS.md`)](./docs/BENCHMARKS.md):** Empirical nanosecond microbenchmark results, 2,000 CCU load simulation, and memory leak audit proofs.
 * **[Cloud Infrastructure Cost Analysis (`docs/COST_ANALYSIS.md`)](./docs/COST_ANALYSIS.md):** Public cloud egress financial models, headcount savings matrix (5 to 5,000,000 CCU), and End-of-Service (EoS) perpetual maintenance economics.
+* **[Operations, Observability & Security (`docs/OPERATIONS_AND_SECURITY.md`)](./docs/OPERATIONS_AND_SECURITY.md):** Adversarial threat modeling, SRE phase latency telemetry, protocol semantic versioning, and Agones lifecycle hooks.
 
 ---
 

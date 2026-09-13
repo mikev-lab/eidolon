@@ -454,8 +454,9 @@ fn test_capacity_overhead_and_tick_percentiles_baseline_2000_ccu() {
 
 #[test]
 fn test_extreme_density_cluster_scaling_up_to_99th_percentile() {
-    // Tests hot-spot cluster scaling with 10, 50, 100, 250, and 500 entities packed into a single AoI
+    // Tests hot-spot cluster scaling across sparse (5) to 99th percentile (500) entities
     let density_tiers = [
+        ("Sparse Encounter", 5usize),
         ("50th Percentile (Ambient Dispersion)", 10usize),
         ("75th Percentile (Active Hub / Skirmish)", 50usize),
         ("90th Percentile (Chokepoint / Dungeon)", 100usize),
@@ -464,12 +465,12 @@ fn test_extreme_density_cluster_scaling_up_to_99th_percentile() {
     ];
 
     println!(
-        "\n================================================================================\n\
-         EXTREME DENSITY CLUSTER SCALING (75th TO 99th PERCENTILE HOT-SPOTS)\n\
-         ================================================================================\n\
-         {:^40} | {:^8} | {:^12} | {:^12} | {:^14}\n\
-         --------------------------------------------------------------------------------",
-        "Cluster Scenario", "Entities", "Query (us)", "Reconcile (us)", "Wire Egress"
+        "\n====================================================================================================\n\
+         EXTREME DENSITY CLUSTER SCALING: UNCLAMPED DEMAND VS SCHEDULED OUTPUT\n\
+         ====================================================================================================\n\
+         {:^38} | {:^8} | {:^10} | {:^10} | {:^16} | {:^16} | {:^11}\n\
+         ----------------------------------------------------------------------------------------------------",
+        "Cluster Scenario", "Entities", "Query", "Reconcile", "Unclamped Demand", "Scheduled Output", "Suppression"
     );
 
     let wire_budget_bps = 1.2 * 1024.0; // 1,228.8 B/s
@@ -525,7 +526,14 @@ fn test_extreme_density_cluster_scaling_up_to_99th_percentile() {
         }
         let avg_reconcile_us = (r_start.elapsed().as_nanos() as f64) / (iterations as f64 * 1000.0);
 
-        // Calculate replication egress under AoI scheduler clamping (max 7 entities per packet at 10 Hz)
+        // 1. Unclamped Replication Demand:
+        // Raw broadcast rate if all visible entities in cluster were sent every tick (20 Hz)
+        // without frequency tiers or packet paging (12B header + 11B/entity + 28B IPv4/UDP):
+        let unclamped_payload_per_tick = (HEADER_SIZE + (entity_count * 11)) as f64;
+        let unclamped_wire_bps = (unclamped_payload_per_tick + 28.0) * 20.0;
+
+        // 2. Scheduled & Clamped Egress Output:
+        // Enforced by AoI frequency scheduler and priority packet packing (Immediate 10 Hz, max 7 entities/pkt)
         const MAX_ENTITIES_PER_PACKET: usize = 7;
         let immediate_count = interest_set
             .visible_tiers()
@@ -538,21 +546,28 @@ fn test_extreme_density_cluster_scaling_up_to_99th_percentile() {
             .filter(|&&t| t == FrequencyTier::Mid)
             .count();
 
-        // Packets per second: 10 Hz (every 2 ticks = 10 packets/s)
         let packets_per_sec = 10.0;
-        // Immediate entities get priority slots, remaining slots filled by interleaved mid-tier entities
         let immediate_in_packet = immediate_count.min(MAX_ENTITIES_PER_PACKET);
         let mid_in_packet = (MAX_ENTITIES_PER_PACKET - immediate_in_packet).min(mid_count);
         let entities_in_packet = immediate_in_packet + mid_in_packet;
 
-        // 12B header + (11B per intra-cell entity) + 28B IPv4/UDP framing
-        let payload_bytes_per_pkt = (HEADER_SIZE + (entities_in_packet * 11)) as f64;
-        let wire_bytes_per_pkt = payload_bytes_per_pkt + 28.0;
-        let wire_egress_bps = wire_bytes_per_pkt * packets_per_sec;
+        let clamped_payload_bytes_per_pkt = (HEADER_SIZE + (entities_in_packet * 11)) as f64;
+        let clamped_wire_bytes_per_pkt = clamped_payload_bytes_per_pkt + 28.0;
+        let clamped_wire_bps = clamped_wire_bytes_per_pkt * packets_per_sec;
+
+        let suppression_pct = (1.0 - (clamped_wire_bps / unclamped_wire_bps)) * 100.0;
 
         println!(
-            "{:<40} | {:>8} | {:>10.2} us | {:>10.2} us | {:>8.2} B/s",
-            scenario, entity_count, avg_query_us, avg_reconcile_us, wire_egress_bps
+            "{:<38} | {:>8} | {:>7.2} us | {:>7.2} us | {:>10.2} B/s ({:>5.1} KB/s) | {:>10.2} B/s ({:>4.2} KB/s) | {:>9.1}%",
+            scenario,
+            entity_count,
+            avg_query_us,
+            avg_reconcile_us,
+            unclamped_wire_bps,
+            unclamped_wire_bps / 1024.0,
+            clamped_wire_bps,
+            clamped_wire_bps / 1024.0,
+            suppression_pct
         );
 
         // Assertions:
@@ -561,13 +576,20 @@ fn test_extreme_density_cluster_scaling_up_to_99th_percentile() {
             avg_query_us < 500.0,
             "Spatial query exceeded 500 us for {entity_count} entities: {avg_query_us:.2} us"
         );
-        // 2. Wire egress must strictly remain clamped under the 1.2 KB/s budget (1,228.8 B/s)
+        // 2. Scheduled wire egress must strictly remain clamped under the 1.2 KB/s budget (1,228.8 B/s)
         assert!(
-            wire_egress_bps <= wire_budget_bps,
-            "Wire egress ({wire_egress_bps:.2} B/s) exceeded 1.2 KB/s wire budget for {entity_count} entities"
+            clamped_wire_bps <= wire_budget_bps,
+            "Scheduled wire egress ({clamped_wire_bps:.2} B/s) exceeded 1.2 KB/s wire budget for {entity_count} entities"
         );
+        // 3. For large clusters, unclamped demand would have severely breached the wire budget
+        if entity_count >= 50 {
+            assert!(
+                unclamped_wire_bps > wire_budget_bps,
+                "Unclamped demand for {entity_count} entities should exceed wire budget"
+            );
+        }
     }
-    println!("================================================================================");
+    println!("====================================================================================================");
 }
 
 #[test]

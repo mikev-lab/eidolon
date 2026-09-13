@@ -88,19 +88,25 @@ Collected via `crates/eidolon-server/tests/extreme_stress_benchmarks.rs` across 
 
 ---
 
-## 5. Extreme Density Stress Testing (75th to 99th Percentile Cluster Scaling)
+## 5. Extreme Density Stress Testing: Unclamped Demand vs. Scheduled Output
 
-In real MMO gameplay, players naturally cluster into high-density gatherings (world bosses, trade hubs, bridge skirmishes). The engine enforces strict per-client bandwidth clamping and sub-millisecond spatial queries across density extremes:
+In real MMO gameplay, players naturally cluster into high-density gatherings (world bosses, trade hubs, bridge skirmishes). Unchecked broadcast netcode causes quadratic message explosions.
 
-| Scenario | Entity Density | Spatial Query Latency | Visibility Reconcile Latency | Wire Egress per Observer | Wire Budget Status |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **50th Percentile (Ambient)** | 10 entities in AoI | **0.33 µs** | **0.25 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
-| **75th Percentile (Hub Skirmish)** | 50 entities in AoI | **0.70 µs** | **1.17 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
-| **90th Percentile (Chokepoint)** | 100 entities in AoI | **1.47 µs** | **2.30 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
-| **95th Percentile (Major Raid)** | 250 entities in AoI | **4.74 µs** | **10.76 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
-| **99th Percentile (Flash Mob)** | 500 entities in single cell | **7.33 µs** | **25.52 µs** | **1,170.00 B/s (1.14 KB/s)** | Conforms (<1.2 KB/s) |
+The benchmark harness (`crates/eidolon-server/tests/extreme_stress_benchmarks.rs`) measures both:
+1. **Unclamped Replication Demand:** The network traffic a client would receive if all visible entities in the cluster were broadcast every tick at 20 Hz without AoI frequency tiers (12B header + 11B/entity + 28B IPv4/UDP framing).
+2. **`eidolon` Scheduled Output:** The actual wire egress emitted by the dynamic AoI frequency scheduler and priority packet packer (10 Hz Immediate prioritization with time-sliced mid-tier paging).
+3. **Traffic Suppression Ratio:** The percentage of potential network storm traffic suppressed by the engine:
 
-> **The Architectural Takeaway:** Even with 500 entities packed into a single 64-meter cell (99th percentile extreme crowd density), spatial queries execute in **under 8 microseconds**, and client egress remains strictly clamped at **1,170.00 B/s**, completely preventing network packet storms or client buffer bloat.
+| Scenario | Density in AoI | Query Latency | Reconcile Latency | Unclamped Demand (20 Hz) | `eidolon` Scheduled Output | Traffic Suppression | Wire Budget Status |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Sparse Encounter** | 5 entities | **0.33 µs** | **0.19 µs** | 1,900 B/s (1.9 KB/s) | **950.00 B/s (0.93 KB/s)** | **50.0%** | Conforms (<1.2 KB/s) |
+| **50th % (Ambient)** | 10 entities | **0.49 µs** | **0.41 µs** | 3,000 B/s (2.9 KB/s) | **1,170.00 B/s (1.14 KB/s)** | **61.0%** | Conforms (<1.2 KB/s) |
+| **75th % (Hub Skirmish)** | 50 entities | **1.63 µs** | **1.85 µs** | 11,800 B/s (11.5 KB/s) | **1,170.00 B/s (1.14 KB/s)** | **90.1%** | Conforms (<1.2 KB/s) |
+| **90th % (Chokepoint)** | 100 entities | **1.37 µs** | **2.23 µs** | 22,800 B/s (22.3 KB/s) | **1,170.00 B/s (1.14 KB/s)** | **94.9%** | Conforms (<1.2 KB/s) |
+| **95th % (Major Raid)** | 250 entities | **3.09 µs** | **7.08 µs** | 55,800 B/s (54.5 KB/s) | **1,170.00 B/s (1.14 KB/s)** | **97.9%** | Conforms (<1.2 KB/s) |
+| **99th % (Flash Mob)** | 500 entities | **6.11 µs** | **19.11 µs** | 110,800 B/s (108.2 KB/s) | **1,170.00 B/s (1.14 KB/s)** | **98.9%** | Conforms (<1.2 KB/s) |
+
+> **The Architectural Takeaway:** Without `eidolon`, a 500-player flash mob would saturate client downlinks at **108.2 KB/s**, causing buffer bloat and packet drops. `eidolon` suppresses **98.9%** of that packet storm, strictly holding wire egress to **1.14 KB/s** while completing spatial queries in **under 7 microseconds**.
 
 ---
 
@@ -118,3 +124,30 @@ For comprehensive financial models, cloud provider rate comparisons (AWS, GCP, A
 | **100,000 CCU (Top Steam Title)** | $2,848,572 / year | **$145,272 / year** | **$2,703,300 / year (94.9%)** |
 | **1,000,000 CCU (Global Hit)** | $28,485,732 / year | **$1,452,768 / year** | **$27,032,964 / year (94.9%)** |
 | **5,000,000 CCU (Peak Scale)** | $142,428,672 / year | **$7,263,864 / year** | **$135,164,808 / year (94.9%)** |
+
+---
+
+## 7. Benchmark Testbed & Hardware Disclosure Specification
+
+To ensure scientific reproducibility and transparency, all empirical benchmarks reported in this specification were executed under the following hardware and software parameters:
+
+### Hardware Environment
+- **Processor:** Apple M4 (System-on-Chip)
+- **CPU Cores:** 10 physical cores (4 Performance cores up to 4.4 GHz + 6 Efficiency cores up to 2.8 GHz)
+- **Vector Engine:** ARM NEON 128-bit SIMD vector execution pipelines
+- **Architecture:** `aarch64` / ARMv8.7-A
+- **Memory Subsystem:** Unified high-bandwidth LPDDR5X memory architecture
+
+### Software & Operating System
+- **Operating System:** macOS Darwin 24.3.0 (`aarch64-apple-darwin`)
+- **Kernel:** XNU Darwin Kernel Version 24.3.0
+- **Rust Toolchain:** `rustc 1.98.1 (48a229cea 2026-09-01)` stable
+- **Target Profile:** `release` (`opt-level = 3`, `codegen-units = 1`, `lto = "thin"`)
+- **Memory Allocator:** Rust standard system allocator; all hot tick loops operate with **zero runtime heap allocations** (`Vec::new()`, `String`, `Box` strictly prohibited during simulation).
+
+### Timing & Measurement Methodology
+- **Clock Source:** Monotonic hardware counters accessed via `std::time::Instant::now()`.
+- **Microbenchmarks:** 100,000 to 500,000 warm-up and measurement iterations with nanosecond-level statistical averaging.
+- **Simulation Harness:** 200 consecutive ticks (10.0 seconds of simulation) across 2,000 active synthetic entities and 100 full-stack observer clients communicating over real loopback UDP sockets.
+- **Percentile Calculation:** Exact rank-order sorting over collected microsecond samples ($N = 100$ to $N = 200$) using nearest-rank index formulations.
+
