@@ -15,7 +15,8 @@ pub use aoi::{
     MAX_AOI_RADIUS_SQ,
 };
 pub use grid::{
-    CellCoord, SpatialError, SpatialHashGrid, CELL_HORIZONTAL_SIZE, CELL_VERTICAL_SIZE,
+    CellCoord, SpatialError, SpatialHashGrid, SpatialQueryResult, CELL_HORIZONTAL_SIZE,
+    CELL_VERTICAL_SIZE,
 };
 pub use tier::{
     FrequencyTier, IMMEDIATE_DEMOTION_DIST_SQ, IMMEDIATE_PROMOTION_DIST_SQ, MID_DEMOTION_DIST_SQ,
@@ -56,10 +57,12 @@ mod tests {
 
         // Query within 10m radius of e1 (radius_sq = 100)
         let mut query_results = [0u32; 16];
-        let count = grid.query_radius_squared(e1_pos, Fixed64::from_i32(100), &mut query_results);
+        let res = grid.query_radius_squared(e1_pos, Fixed64::from_i32(100), &mut query_results);
 
-        assert_eq!(count, 2);
-        let matched: Vec<u32> = query_results[..count].to_vec();
+        assert_eq!(res.written, 2);
+        assert_eq!(res.total_matches, 2);
+        assert!(!res.is_truncated());
+        let matched: Vec<u32> = query_results[..res.written].to_vec();
         assert!(matched.contains(&1));
         assert!(matched.contains(&2));
         assert!(!matched.contains(&3));
@@ -156,21 +159,74 @@ mod tests {
         let mut scalar_results = [0u32; 32];
         let mut batched_results = [0u32; 32];
 
-        let scalar_count = grid.query_radius_squared(center, radius_sq, &mut scalar_results);
-        let batched_count =
+        let scalar_res = grid.query_radius_squared(center, radius_sq, &mut scalar_results);
+        let batched_res =
             grid.query_radius_squared_batched(center, radius_sq, &mut batched_results);
 
         assert_eq!(
-            scalar_count, batched_count,
+            scalar_res.written, batched_res.written,
             "Batched query count must match scalar query count"
         );
-        let mut scalar_matched = scalar_results[..scalar_count].to_vec();
-        let mut batched_matched = batched_results[..batched_count].to_vec();
+        assert_eq!(scalar_res.total_matches, batched_res.total_matches);
+        let mut scalar_matched = scalar_results[..scalar_res.written].to_vec();
+        let mut batched_matched = batched_results[..batched_res.written].to_vec();
         scalar_matched.sort_unstable();
         batched_matched.sort_unstable();
         assert_eq!(
             scalar_matched, batched_matched,
             "Batched query matches must be identical to scalar query"
         );
+    }
+
+    #[test]
+    fn test_vertical_query_extent_50m() {
+        let mut grid = SpatialHashGrid::with_capacity(50, 64);
+
+        // Observer at (0, 33, 0).
+        // Y=33 is in vertical cell y = 1 (range [32, 64)).
+        let observer_pos = Vec3Fix::from_f64(0.0, 33.0, 0.0);
+        assert_eq!(CellCoord::from_position(observer_pos).y, 1);
+
+        // Entity 1 at (0, -10, 0).
+        // Y=-10 is in vertical cell y = -1 (range [-32, 0)).
+        // Vertical difference in cells: 1 - (-1) = 2 cells (dy = -2).
+        // Euclidean distance: 33 - (-10) = 43 meters <= 50m AoI radius!
+        let entity_pos = Vec3Fix::from_f64(0.0, -10.0, 0.0);
+        assert_eq!(CellCoord::from_position(entity_pos).y, -1);
+        assert!(grid.insert(42, entity_pos).is_ok());
+
+        let mut output = [0u32; 16];
+        let res = grid.query_radius_squared(observer_pos, MAX_AOI_RADIUS_SQ, &mut output);
+
+        assert_eq!(res.written, 1);
+        assert_eq!(res.total_matches, 1);
+        assert_eq!(output[0], 42);
+
+        // Also verify batched query discovers the entity across dy = -2
+        let mut batched_output = [0u32; 16];
+        let batched_res =
+            grid.query_radius_squared_batched(observer_pos, MAX_AOI_RADIUS_SQ, &mut batched_output);
+        assert_eq!(batched_res.written, 1);
+        assert_eq!(batched_output[0], 42);
+    }
+
+    #[test]
+    fn test_spatial_query_result_truncation() {
+        let mut grid = SpatialHashGrid::with_capacity(50, 64);
+        let center = Vec3Fix::from_f64(0.0, 0.0, 0.0);
+
+        for id in 1..=5 {
+            assert!(grid
+                .insert(id, Vec3Fix::from_f64(id as f64, 0.0, 0.0))
+                .is_ok());
+        }
+
+        // Buffer only holds 2 entities, but 5 match
+        let mut small_buffer = [0u32; 2];
+        let res = grid.query_radius_squared(center, Fixed64::from_i32(100), &mut small_buffer);
+
+        assert_eq!(res.written, 2);
+        assert_eq!(res.total_matches, 5);
+        assert!(res.is_truncated());
     }
 }

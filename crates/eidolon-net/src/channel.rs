@@ -215,6 +215,13 @@ impl<const PENDING_CAP: usize, const ORDERED_CAP: usize> ReliableChannel<PENDING
             self.expected_incoming_seq = self.expected_incoming_seq.wrapping_add(1);
             Ok(Some((payload, data.len())))
         } else if UnreliableSequencer::is_sequence_newer(seq, self.expected_incoming_seq) {
+            // Guard against duplicate out-of-order deliveries consuming slots
+            for incoming in self.reorder_buffer.iter().flatten() {
+                if incoming.sequence == seq {
+                    return Ok(None);
+                }
+            }
+
             // Buffer future out-of-order packet
             for slot in self.reorder_buffer.iter_mut() {
                 if slot.is_none() {
@@ -252,6 +259,48 @@ impl<const PENDING_CAP: usize, const ORDERED_CAP: usize> ReliableChannel<PENDING
             }
         }
         None
+    }
+
+    /// Drains all currently available in-order packets from the reorder buffer into `output`.
+    ///
+    /// Iteratively advances `expected_incoming_seq` as long as contiguous buffered packets exist.
+    /// Returns the number of packets drained.
+    pub fn drain_ordered_packets(
+        &mut self,
+        output: &mut [([u8; MAX_RELIABLE_PAYLOAD], usize)],
+    ) -> usize {
+        let mut count = 0;
+        while count < output.len() {
+            if let Some(packet) = self.drain_next_ordered_packet() {
+                output[count] = packet;
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        count
+    }
+
+    /// Ingests an incoming reliable packet and automatically drains all subsequent contiguous packets
+    /// from the reorder buffer into `output`.
+    ///
+    /// Returns `Ok(count)` where `count` is the total number of ordered packets written into `output`
+    /// (including the newly arrived packet and any drained buffered packets).
+    pub fn receive_and_drain_ordered(
+        &mut self,
+        seq: u16,
+        data: &[u8],
+        output: &mut [([u8; MAX_RELIABLE_PAYLOAD], usize)],
+    ) -> Result<usize, NetError> {
+        let mut count = 0;
+        if let Some(first) = self.receive_reliable_packet(seq, data)? {
+            if !output.is_empty() {
+                output[0] = first;
+                count += 1;
+                count += self.drain_ordered_packets(&mut output[count..]);
+            }
+        }
+        Ok(count)
     }
 
     /// Ticks retransmission timers and returns any packets needing retransmission.
@@ -352,5 +401,55 @@ mod tests {
         assert!(drained.is_some());
         let (p1, len1) = drained.unwrap();
         assert_eq!(&p1[..len1], b"world");
+    }
+
+    #[test]
+    fn test_reliable_channel_batch_auto_drain() {
+        let mut channel = ReliableChannel::<16, 16>::new();
+
+        // Packets arrive out of order: 2, 3, 1, then 0 arrives
+        assert!(channel.receive_reliable_packet(2, b"c").unwrap().is_none());
+        assert!(channel.receive_reliable_packet(3, b"d").unwrap().is_none());
+        assert!(channel.receive_reliable_packet(1, b"b").unwrap().is_none());
+
+        // Packet 0 arrives via receive_and_drain_ordered
+        let mut output = [([0u8; MAX_RELIABLE_PAYLOAD], 0usize); 8];
+        let delivered = channel
+            .receive_and_drain_ordered(0, b"a", &mut output)
+            .expect("receive and drain");
+
+        // All 4 packets (0, 1, 2, 3) must be delivered contiguously in order
+        assert_eq!(delivered, 4);
+        assert_eq!(&output[0].0[..output[0].1], b"a");
+        assert_eq!(&output[1].0[..output[1].1], b"b");
+        assert_eq!(&output[2].0[..output[2].1], b"c");
+        assert_eq!(&output[3].0[..output[3].1], b"d");
+    }
+
+    #[test]
+    fn test_reliable_channel_reorder_duplicate_ignore() {
+        let mut channel = ReliableChannel::<16, 16>::new();
+
+        // Packet 2 arrives out of order
+        assert!(channel.receive_reliable_packet(2, b"x").unwrap().is_none());
+        // Duplicate packet 2 arrives out of order again
+        assert!(channel.receive_reliable_packet(2, b"x").unwrap().is_none());
+
+        // Drain should only yield packet 2 once when sequence reaches 2
+        let mut out = [([0u8; MAX_RELIABLE_PAYLOAD], 0usize); 4];
+        let d0 = channel
+            .receive_and_drain_ordered(0, b"0", &mut out)
+            .unwrap();
+        assert_eq!(d0, 1);
+        let d1 = channel
+            .receive_and_drain_ordered(1, b"1", &mut out)
+            .unwrap();
+        // Delivering 1 should auto-drain 2, total = 2 packets
+        assert_eq!(d1, 2);
+        assert_eq!(&out[0].0[..out[0].1], b"1");
+        assert_eq!(&out[1].0[..out[1].1], b"x");
+
+        // Buffer is empty now
+        assert!(channel.drain_next_ordered_packet().is_none());
     }
 }

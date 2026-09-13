@@ -4,7 +4,7 @@
 //! across contiguous spatial hash grids.
 
 use eidolon_core::fixed::{Fixed64, Vec3Fix};
-use eidolon_spatial::grid::SpatialHashGrid;
+use eidolon_spatial::grid::{SpatialError, SpatialHashGrid};
 
 use crate::error::WorldError;
 pub use crate::error::ZoneId;
@@ -149,7 +149,10 @@ impl WorldZone {
     pub fn insert_entity(&mut self, entity_id: u32, pos: Vec3Fix) -> Result<(), WorldError> {
         self.spatial_grid
             .insert(entity_id, pos)
-            .map_err(|_| WorldError::ZoneFull(self.id))
+            .map_err(|e| match e {
+                SpatialError::EntityAlreadyExists(id) => WorldError::EntityAlreadyExists(id),
+                _ => WorldError::ZoneFull(self.id),
+            })
     }
 
     /// Removes an entity from the zone's spatial grid.
@@ -241,7 +244,16 @@ impl WorldManager {
         };
 
         if let Some(to_zone_id) = neighbor_id {
-            // Step 2: Atomic in-memory migration
+            // Step 2: Atomic in-memory migration with transactional rollback
+            let prev_pos = {
+                let current_zone = self
+                    .get_zone(current_zone_id)
+                    .ok_or(WorldError::ZoneNotFound(current_zone_id))?;
+                current_zone
+                    .entity_position(entity_id)
+                    .ok_or(WorldError::EntityNotFound(entity_id))?
+            };
+
             // Remove from source zone
             {
                 let current_zone = self
@@ -250,12 +262,24 @@ impl WorldManager {
                 current_zone.remove_entity(entity_id)?;
             }
 
-            // Insert into destination zone
-            {
-                let target_zone = self
-                    .get_zone_mut(to_zone_id)
-                    .ok_or(WorldError::ZoneNotFound(to_zone_id))?;
-                target_zone.insert_entity(entity_id, new_pos)?;
+            // Attempt insertion into destination zone
+            let target_insert_res = match self.get_zone_mut(to_zone_id) {
+                Some(target_zone) => target_zone.insert_entity(entity_id, new_pos),
+                None => {
+                    // Rollback: restore entity to source zone
+                    if let Some(source_zone) = self.get_zone_mut(current_zone_id) {
+                        let _ = source_zone.insert_entity(entity_id, prev_pos);
+                    }
+                    return Err(WorldError::ZoneNotFound(to_zone_id));
+                }
+            };
+
+            if let Err(e) = target_insert_res {
+                // Rollback: restore entity to source zone at original position
+                if let Some(source_zone) = self.get_zone_mut(current_zone_id) {
+                    let _ = source_zone.insert_entity(entity_id, prev_pos);
+                }
+                return Err(e);
             }
 
             Ok(Some(MigrationTicket {
@@ -383,5 +407,55 @@ mod tests {
         // Entity 5 is now in Zone 2, removed from Zone 1
         assert!(!manager.get_zone(ZoneId(1)).unwrap().contains_entity(5));
         assert!(manager.get_zone(ZoneId(2)).unwrap().contains_entity(5));
+    }
+
+    #[test]
+    fn test_transactional_migration_rollback_on_target_failure() {
+        let mut manager = WorldManager::new();
+
+        let bounds1 = ZoneBounds::new(
+            Fixed64::from_i32(0),
+            Fixed64::from_i32(100),
+            Fixed64::from_i32(0),
+            Fixed64::from_i32(100),
+            SeamAxis::EastWest,
+            Fixed64::from_i32(84),
+            Fixed64::from_i32(100),
+        );
+        let mut zone1 = WorldZone::new(ZoneId(1), bounds1, Some(ZoneId(2)), true, 64);
+
+        let bounds2 = ZoneBounds::new(
+            Fixed64::from_i32(84),
+            Fixed64::from_i32(184),
+            Fixed64::from_i32(0),
+            Fixed64::from_i32(100),
+            SeamAxis::EastWest,
+            Fixed64::from_i32(84),
+            Fixed64::from_i32(100),
+        );
+        // Zone 2 configured with max_entities = 2, so entity ID 5 is invalid (>= 2)
+        let zone2 = WorldZone::new(ZoneId(2), bounds2, Some(ZoneId(1)), false, 2);
+
+        let initial_pos = Vec3Fix::from_i32(50, 0, 50);
+        zone1
+            .insert_entity(5, initial_pos)
+            .expect("insert entity 5");
+
+        manager.add_zone(zone1);
+        manager.add_zone(zone2);
+
+        // Attempt movement past midpoint into Zone 2: Zone 2 cannot accept entity 5 (exceeds max_entities 2)
+        let res = manager.tick_entity_movement(5, ZoneId(1), Vec3Fix::from_i32(95, 0, 50));
+
+        // Migration must fail with ZoneFull error
+        assert_eq!(res, Err(WorldError::ZoneFull(ZoneId(2))));
+
+        // Entity 5 must have been rolled back into Zone 1 at initial_pos
+        let z1 = manager.get_zone(ZoneId(1)).unwrap();
+        assert!(
+            z1.contains_entity(5),
+            "Entity must be safely preserved in source zone after failed migration"
+        );
+        assert_eq!(z1.entity_position(5), Some(initial_pos));
     }
 }

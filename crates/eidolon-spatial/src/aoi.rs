@@ -146,6 +146,9 @@ impl ObserverInterestSet {
 
     /// Updates tracked visibility from a spatial query result, emitting visibility events
     /// into `event_output` without heap allocation.
+    ///
+    /// Executes in O(N + M) time using sorted double-buffered arrays, binary search hysteresis lookups,
+    /// and two-pointer merge sweeps.
     pub fn update_visibility(
         &mut self,
         grid: &SpatialHashGrid,
@@ -166,7 +169,7 @@ impl ObserverInterestSet {
             if let Some(cand_pos) = grid.get_position(cand_id) {
                 let dist_sq = observer_pos.distance_squared(cand_pos);
                 if dist_sq <= MAX_AOI_RADIUS_SQ {
-                    // Search in previous buffer for hysteresis continuity
+                    // Search in sorted previous buffer for hysteresis continuity in O(log M)
                     let prev_idx = self.find_in_prev(cand_id);
                     let new_tier = match prev_idx {
                         Some(idx) => self.prev_tiers[idx].update_with_hysteresis(dist_sq),
@@ -195,34 +198,73 @@ impl ObserverInterestSet {
                         }
                     }
 
-                    if self.curr_count < self.max_tracked {
-                        self.curr_entity_ids[self.curr_count] = cand_id;
-                        self.curr_tiers[self.curr_count] = new_tier;
-                        self.curr_count += 1;
+                    // Maintain sorted order in curr buffers for O(N + M) diffing and O(log N) lookup
+                    match self.curr_entity_ids[..self.curr_count].binary_search(&cand_id) {
+                        Ok(existing_idx) => {
+                            self.curr_tiers[existing_idx] = new_tier;
+                        }
+                        Err(insert_idx) => {
+                            if self.curr_count < self.max_tracked {
+                                self.curr_entity_ids
+                                    .copy_within(insert_idx..self.curr_count, insert_idx + 1);
+                                self.curr_tiers
+                                    .copy_within(insert_idx..self.curr_count, insert_idx + 1);
+                                self.curr_entity_ids[insert_idx] = cand_id;
+                                self.curr_tiers[insert_idx] = new_tier;
+                                self.curr_count += 1;
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // 2. Detect exited entities (entities in prev buffer missing from curr buffer)
-        for i in 0..self.prev_count {
-            let old_id = self.prev_entity_ids[i];
-            if !self.contains_in_curr(old_id) && event_count < event_output.len() {
-                event_output[event_count] = VisibilityEvent::Exit { entity_id: old_id };
+        // 2. Detect exited entities using an O(N + M) two-pointer merge sweep
+        let mut prev_idx = 0;
+        let mut curr_idx = 0;
+        while prev_idx < self.prev_count && curr_idx < self.curr_count {
+            let prev_id = self.prev_entity_ids[prev_idx];
+            let curr_id = self.curr_entity_ids[curr_idx];
+            if prev_id < curr_id {
+                // prev_id is not in curr: it has exited
+                if event_count < event_output.len() {
+                    event_output[event_count] = VisibilityEvent::Exit { entity_id: prev_id };
+                    event_count += 1;
+                }
+                prev_idx += 1;
+            } else if prev_id > curr_id {
+                curr_idx += 1;
+            } else {
+                // Entity is present in both sets
+                prev_idx += 1;
+                curr_idx += 1;
+            }
+        }
+
+        while prev_idx < self.prev_count {
+            let prev_id = self.prev_entity_ids[prev_idx];
+            if event_count < event_output.len() {
+                event_output[event_count] = VisibilityEvent::Exit { entity_id: prev_id };
                 event_count += 1;
             }
+            prev_idx += 1;
         }
 
         event_count
     }
 
+    /// Returns true if the specified entity ID is currently visible to the observer.
     #[inline]
-    fn find_in_prev(&self, entity_id: u32) -> Option<usize> {
-        (0..self.prev_count).find(|&i| self.prev_entity_ids[i] == entity_id)
+    pub fn contains(&self, entity_id: u32) -> bool {
+        self.curr_entity_ids[..self.curr_count]
+            .binary_search(&entity_id)
+            .is_ok()
     }
 
     #[inline]
-    fn contains_in_curr(&self, entity_id: u32) -> bool {
-        (0..self.curr_count).any(|i| self.curr_entity_ids[i] == entity_id)
+    fn find_in_prev(&self, entity_id: u32) -> Option<usize> {
+        self.prev_entity_ids[..self.prev_count]
+            .binary_search(&entity_id)
+            .ok()
     }
 }

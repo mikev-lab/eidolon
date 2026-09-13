@@ -43,6 +43,33 @@ impl fmt::Display for SpatialError {
     }
 }
 
+/// Result of a spatial radius query returning both the count of elements written into the caller's buffer
+/// and the total count of matched entities in the spatial partition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SpatialQueryResult {
+    /// Number of entity IDs successfully written into the provided destination buffer.
+    pub written: usize,
+    /// Total number of matching entities discovered within the search radius.
+    pub total_matches: usize,
+}
+
+impl SpatialQueryResult {
+    /// Constructs a query result.
+    #[inline]
+    pub const fn new(written: usize, total_matches: usize) -> Self {
+        Self {
+            written,
+            total_matches,
+        }
+    }
+
+    /// Returns true if the query results exceeded the capacity of the destination buffer.
+    #[inline]
+    pub const fn is_truncated(&self) -> bool {
+        self.total_matches > self.written
+    }
+}
+
 /// Discrete 3D integer coordinate identifying a spatial cell bucket.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct CellCoord {
@@ -283,22 +310,28 @@ impl SpatialHashGrid {
 
     /// Queries all entities within a squared radius of a continuous point.
     ///
-    /// Scans the bounded 3x3 neighborhood of cells centered on the point.
+    /// Scans the bounded neighborhood of cells centered on the point (including vertical +/- 2
+    /// cells when radius exceeds 32 meters to prevent blind spots).
     /// Matches are written directly into `output_buffer` without heap allocation.
-    /// Returns the total number of matched entities.
+    /// Returns a `SpatialQueryResult` with the count written and total matches.
     pub fn query_radius_squared(
         &self,
         center: Vec3Fix,
         radius_sq: Fixed64,
         output_buffer: &mut [u32],
-    ) -> usize {
+    ) -> SpatialQueryResult {
         let center_cell = CellCoord::from_position(center);
         let mut matched_count = 0;
+        let max_dy = if radius_sq > Fixed64::from_i32(32 * 32) {
+            2
+        } else {
+            1
+        };
 
-        // 3x3 cell neighborhood iteration around observer
+        // Cell neighborhood iteration around observer
         for dx in -1..=1 {
             for dz in -1..=1 {
-                for dy in -1..=1 {
+                for dy in -max_dy..=max_dy {
                     let neighbor_cell =
                         CellCoord::new(center_cell.x + dx, center_cell.y + dy, center_cell.z + dz);
                     let key = neighbor_cell.spatial_key();
@@ -322,7 +355,7 @@ impl SpatialHashGrid {
             }
         }
 
-        matched_count
+        SpatialQueryResult::new(matched_count.min(output_buffer.len()), matched_count)
     }
 
     /// Queries active entities within a squared radius of the center point using 4-wide SIMD batching.
@@ -335,18 +368,23 @@ impl SpatialHashGrid {
         center: Vec3Fix,
         radius_sq: Fixed64,
         output_buffer: &mut [u32],
-    ) -> usize {
+    ) -> SpatialQueryResult {
         let center_cell = CellCoord::from_position(center);
         let mut matched_count = 0;
+        let max_dy = if radius_sq > Fixed64::from_i32(32 * 32) {
+            2
+        } else {
+            1
+        };
 
         let mut batch_candidates = [0u32; 4];
         let mut batch_positions = [Vec3Fix::ZERO; 4];
         let mut batch_len = 0;
 
-        // 3x3 cell neighborhood iteration around observer
+        // Cell neighborhood iteration around observer
         for dx in -1..=1 {
             for dz in -1..=1 {
-                for dy in -1..=1 {
+                for dy in -max_dy..=max_dy {
                     let neighbor_cell =
                         CellCoord::new(center_cell.x + dx, center_cell.y + dy, center_cell.z + dz);
                     let key = neighbor_cell.spatial_key();
@@ -394,7 +432,7 @@ impl SpatialHashGrid {
             }
         }
 
-        matched_count
+        SpatialQueryResult::new(matched_count.min(output_buffer.len()), matched_count)
     }
 
     /// Counts active entities residing in a specific cell.

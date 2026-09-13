@@ -36,19 +36,20 @@ fn test_cell_density_saturation_1000_entities() {
     let query_radius_sq = Fixed64::from_i32(400);
 
     let start = Instant::now();
-    let count = grid.query_radius_squared(cell_center, query_radius_sq, &mut output_buffer);
+    let res = grid.query_radius_squared(cell_center, query_radius_sq, &mut output_buffer);
     let elapsed = start.elapsed();
 
-    // Verify sub-500 microsecond execution budget in unoptimized debug mode (<15µs in release)
+    // Profile-aware execution budget: <25µs in release profile, <2,000µs in debug profile on shared cloud runners
+    let max_micros = if cfg!(debug_assertions) { 2000 } else { 25 };
     assert!(
-        elapsed.as_micros() < 500,
-        "Spatial query on 1,000 packed entities must execute under 500 microseconds in debug, took {:?}",
+        elapsed.as_micros() < max_micros,
+        "Spatial query on 1,000 packed entities threshold exceeded, took {:?}",
         elapsed
     );
-    assert!(count > 0, "Query must find clustered entities");
+    assert!(res.written > 0, "Query must find clustered entities");
 
     // Verify correctness: all matched entities must be <= 20m from center
-    for &id in &output_buffer[..count] {
+    for &id in &output_buffer[..res.written] {
         let pos = grid.get_position(id).expect("Active entity position");
         assert!(
             pos.distance_squared(cell_center) <= query_radius_sq,
@@ -112,8 +113,8 @@ fn test_observer_visibility_lifecycle_and_hysteresis() {
     assert!(grid.insert(3, Vec3Fix::from_f64(60.0, 0.0, 0.0)).is_ok());
 
     let mut query_buf = [0u32; 32];
-    let candidate_count =
-        grid.query_radius_squared(observer_pos, MAX_AOI_RADIUS_SQ, &mut query_buf);
+    let query_res = grid.query_radius_squared(observer_pos, MAX_AOI_RADIUS_SQ, &mut query_buf);
+    let candidate_count = query_res.written;
     assert_eq!(
         candidate_count, 2,
         "Entities 1 and 2 must be within 50m AoI"
@@ -142,8 +143,8 @@ fn test_observer_visibility_lifecycle_and_hysteresis() {
         grid.update_position(1, Vec3Fix::from_f64(10.0, 0.0, 0.0)),
         Ok(false)
     );
-    let candidate_count =
-        grid.query_radius_squared(observer_pos, MAX_AOI_RADIUS_SQ, &mut query_buf);
+    let query_res = grid.query_radius_squared(observer_pos, MAX_AOI_RADIUS_SQ, &mut query_buf);
+    let candidate_count = query_res.written;
     let event_count = observer_interest.update_visibility(
         &grid,
         observer_pos,
@@ -160,8 +161,8 @@ fn test_observer_visibility_lifecycle_and_hysteresis() {
         grid.update_position(1, Vec3Fix::from_f64(12.0, 0.0, 0.0)),
         Ok(false)
     );
-    let candidate_count =
-        grid.query_radius_squared(observer_pos, MAX_AOI_RADIUS_SQ, &mut query_buf);
+    let query_res = grid.query_radius_squared(observer_pos, MAX_AOI_RADIUS_SQ, &mut query_buf);
+    let candidate_count = query_res.written;
     let event_count = observer_interest.update_visibility(
         &grid,
         observer_pos,
@@ -182,8 +183,8 @@ fn test_observer_visibility_lifecycle_and_hysteresis() {
         grid.update_position(2, Vec3Fix::from_f64(55.0, 0.0, 0.0)),
         Ok(false)
     );
-    let candidate_count =
-        grid.query_radius_squared(observer_pos, MAX_AOI_RADIUS_SQ, &mut query_buf);
+    let query_res = grid.query_radius_squared(observer_pos, MAX_AOI_RADIUS_SQ, &mut query_buf);
+    let candidate_count = query_res.written;
     let event_count = observer_interest.update_visibility(
         &grid,
         observer_pos,

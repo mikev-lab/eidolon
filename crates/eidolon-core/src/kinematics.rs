@@ -213,10 +213,14 @@ pub fn reconcile_smooth(
     client_state.angular_velocity = authoritative.angular_velocity;
     client_state.flags = authoritative.flags;
 
-    // Advance heading toward authoritative yaw
+    // Advance heading toward authoritative yaw using exact fixed-point smoothing
     let yaw_delta = client_state.yaw.shortest_arc_delta(authoritative.yaw);
-    let step = (((yaw_delta.abs() as i32) * alpha_clamped.to_i32()) >> 4) as u8;
-    client_state.yaw = client_state
-        .yaw
-        .advance_toward(authoritative.yaw, step.max(1));
+    if yaw_delta != 0 {
+        let delta_fixed = Fixed64::from_i32(yaw_delta.abs() as i32);
+        let step_fixed = delta_fixed * alpha_clamped;
+        let step = (step_fixed + Fixed64::HALF).to_i32().clamp(0, 255) as u8;
+        if step > 0 {
+            client_state.yaw = client_state.yaw.advance_toward(authoritative.yaw, step);
+        }
+    }
 }

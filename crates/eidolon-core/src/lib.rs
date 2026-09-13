@@ -161,4 +161,40 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_reconcile_smooth_fractional_yaw() {
+        use crate::kinematics::reconcile_smooth;
+
+        let mut client_state = KinematicState {
+            position: Vec3Fix::ZERO,
+            velocity: Vec3Fix::ZERO,
+            acceleration: Vec3Fix::ZERO,
+            yaw: QuantizedYaw::from_byte(0),
+            angular_velocity: 0,
+            flags: 0,
+        };
+
+        let auth_state = KinematicState {
+            position: Vec3Fix::ZERO,
+            velocity: Vec3Fix::ZERO,
+            acceleration: Vec3Fix::ZERO,
+            yaw: QuantizedYaw::from_byte(40), // 40 steps counter-clockwise
+            angular_velocity: 0,
+            flags: 0,
+        };
+
+        // 25% smoothing should advance by 10 steps (40 * 0.25 = 10)
+        reconcile_smooth(&mut client_state, &auth_state, Fixed64::from_f64(0.25));
+        assert_eq!(client_state.yaw.as_byte(), 10);
+
+        // Another 50% smoothing from 10 to 40 (delta 30) should advance by 15 steps -> 25
+        reconcile_smooth(&mut client_state, &auth_state, Fixed64::from_f64(0.50));
+        assert_eq!(client_state.yaw.as_byte(), 25);
+
+        // When yaw is already synchronized (delta = 0), yaw must remain unchanged (no 1-step jitter)
+        let synced_auth = client_state;
+        reconcile_smooth(&mut client_state, &synced_auth, Fixed64::from_f64(0.50));
+        assert_eq!(client_state.yaw.as_byte(), 25);
+    }
 }

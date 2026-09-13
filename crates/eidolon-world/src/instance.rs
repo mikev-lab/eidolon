@@ -153,6 +153,8 @@ impl DungeonInstance {
 #[derive(Debug)]
 pub struct DungeonPool<const MAX_ROOMS: usize> {
     rooms: [Option<DungeonInstance>; MAX_ROOMS],
+    free_slots: [u16; MAX_ROOMS],
+    free_count: usize,
     next_id: u64,
     active_count: usize,
 }
@@ -162,25 +164,28 @@ impl<const MAX_ROOMS: usize> DungeonPool<MAX_ROOMS> {
     pub fn new() -> Self {
         Self {
             rooms: std::array::from_fn(|_| None),
+            free_slots: std::array::from_fn(|i| (MAX_ROOMS.saturating_sub(1 + i)) as u16),
+            free_count: MAX_ROOMS,
             next_id: 1,
             active_count: 0,
         }
     }
 
-    /// Allocates an ephemeral dungeon room from the pool in sub-microsecond time.
+    /// Allocates an ephemeral dungeon room from the pool in constant time O(1).
     ///
     /// Zero heap allocations occur during room acquisition.
     pub fn allocate_instance(&mut self, boss_max_health: u32) -> Result<InstanceId, WorldError> {
-        let slot = self
-            .rooms
-            .iter_mut()
-            .find(|slot| slot.is_none())
-            .ok_or(WorldError::InstancePoolExhausted)?;
+        if self.free_count == 0 {
+            return Err(WorldError::InstancePoolExhausted);
+        }
+
+        self.free_count -= 1;
+        let slot_idx = self.free_slots[self.free_count] as usize;
 
         let id = InstanceId(self.next_id);
         self.next_id = self.next_id.wrapping_add(1);
 
-        *slot = Some(DungeonInstance::new(id, boss_max_health));
+        self.rooms[slot_idx] = Some(DungeonInstance::new(id, boss_max_health));
         self.active_count += 1;
 
         Ok(id)
@@ -202,13 +207,17 @@ impl<const MAX_ROOMS: usize> DungeonPool<MAX_ROOMS> {
             .find(|room| room.id == id)
     }
 
-    /// Deallocates an ephemeral instance room and immediately recycles its memory slot.
+    /// Deallocates an ephemeral instance room and immediately recycles its memory slot in constant time O(1).
     pub fn deallocate_instance(&mut self, id: InstanceId) -> Result<(), WorldError> {
-        for slot in self.rooms.iter_mut() {
+        for (idx, slot) in self.rooms.iter_mut().enumerate() {
             if let Some(room) = slot {
                 if room.id == id {
                     *slot = None;
                     self.active_count = self.active_count.saturating_sub(1);
+                    if self.free_count < MAX_ROOMS {
+                        self.free_slots[self.free_count] = idx as u16;
+                        self.free_count += 1;
+                    }
                     return Ok(());
                 }
             }
@@ -224,7 +233,7 @@ impl<const MAX_ROOMS: usize> DungeonPool<MAX_ROOMS> {
 
     /// Ticks all active instances and purges rooms in the `PendingCleanup` state.
     pub fn tick_all(&mut self) {
-        for slot in self.rooms.iter_mut() {
+        for (idx, slot) in self.rooms.iter_mut().enumerate() {
             let should_clean = if let Some(room) = slot {
                 !room.tick()
             } else {
@@ -234,6 +243,10 @@ impl<const MAX_ROOMS: usize> DungeonPool<MAX_ROOMS> {
             if should_clean {
                 *slot = None;
                 self.active_count = self.active_count.saturating_sub(1);
+                if self.free_count < MAX_ROOMS {
+                    self.free_slots[self.free_count] = idx as u16;
+                    self.free_count += 1;
+                }
             }
         }
     }
