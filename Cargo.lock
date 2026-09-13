@@ -35,5 +35,6 @@ name = "eidolon-world"
 version = "0.1.0"
 dependencies = [
  "eidolon-core",
+ "eidolon-net",
  "eidolon-spatial",
 ]

@@ -13,3 +13,4 @@ workspace = true
 [dependencies]
 eidolon-core = { workspace = true }
 eidolon-spatial = { workspace = true }
+eidolon-net = { workspace = true }

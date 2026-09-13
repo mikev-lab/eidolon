@@ -329,6 +329,16 @@ impl Vec3Fix {
         Self { x, y, z }
     }
 
+    /// Constructs a vector from discrete integer coordinates.
+    #[inline]
+    pub const fn from_i32(x: i32, y: i32, z: i32) -> Self {
+        Self {
+            x: Fixed64::from_i32(x),
+            y: Fixed64::from_i32(y),
+            z: Fixed64::from_i32(z),
+        }
+    }
+
     /// Constructs a vector from f64 coordinates.
     #[inline]
     pub fn from_f64(x: f64, y: f64, z: f64) -> Self {

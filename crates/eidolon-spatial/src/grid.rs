@@ -91,6 +91,7 @@ impl CellCoord {
 ///
 /// Backed by pre-allocated contiguous flat arrays with intrusive doubly-linked slot indexing,
 /// ensuring zero dynamic heap allocations during simulation ticks.
+#[derive(Debug)]
 pub struct SpatialHashGrid {
     max_entities: usize,
     num_buckets: usize,
@@ -110,6 +111,11 @@ pub struct SpatialHashGrid {
 }
 
 impl SpatialHashGrid {
+    /// Constructs a spatial hash grid with default bucket capacity scaling.
+    pub fn new(max_entities: usize) -> Self {
+        Self::with_capacity(max_entities, max_entities.max(64) * 2)
+    }
+
     /// Constructs a spatial hash grid with pre-allocated capacities.
     ///
     /// The number of hash buckets is rounded up to the nearest power of two for branchless masking.
