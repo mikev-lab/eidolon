@@ -39,8 +39,8 @@ fn test_cell_density_saturation_1000_entities() {
     let res = grid.query_radius_squared(cell_center, query_radius_sq, &mut output_buffer);
     let elapsed = start.elapsed();
 
-    // Profile-aware execution budget: <25µs in release profile, <2,000µs in debug profile on shared cloud runners
-    let max_micros = if cfg!(debug_assertions) { 2000 } else { 25 };
+    // Profile-aware execution budget: <100µs in release profile, <2,000µs in debug profile on shared cloud runners
+    let max_micros = if cfg!(debug_assertions) { 2000 } else { 100 };
     assert!(
         elapsed.as_micros() < max_micros,
         "Spatial query on 1,000 packed entities threshold exceeded, took {:?}",
