@@ -6,28 +6,14 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
-use eidolon_core::fixed::Vec3Fix;
+use std::time::{Duration, Instant};
+
 use eidolon_net::protocol::{PROTOCOL_MAGIC, PROTOCOL_VERSION};
-use eidolon_spatial::grid::CellCoord;
-use eidolon_world::zone::ZoneId;
-
-/// Server configuration parameters.
-#[derive(Debug, Clone)]
-pub struct ServerConfig {
-    /// Target simulation tick rate in Hertz (e.g. 20 Hz = 50ms tick).
-    pub tick_rate_hz: u32,
-    /// Default primary world zone to simulate.
-    pub default_zone: ZoneId,
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            tick_rate_hz: 20,
-            default_zone: ZoneId(1),
-        }
-    }
-}
+use eidolon_server::agones::AgonesClient;
+use eidolon_server::config::ServerConfig;
+use eidolon_server::io::NetworkIoWorker;
+use eidolon_server::queue::SpscPacketQueue;
+use eidolon_server::tick::TickCoordinator;
 
 fn main() {
     let config = ServerConfig::default();
@@ -40,22 +26,75 @@ fn main() {
     println!(
         "Simulation target: {} Hz (tick interval: {}ms)",
         config.tick_rate_hz,
-        1000 / config.tick_rate_hz
+        config.tick_interval_millis()
     );
 
-    // Assert initial zero constants for compiler verification
-    let _origin = Vec3Fix::ZERO;
-    let _root_cell = CellCoord::new(0, 0, 0);
+    // Initialize non-blocking UDP I/O worker
+    let worker = match NetworkIoWorker::bind(config.bind_addr) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("Failed to bind UDP socket on {}: {e}", config.bind_addr);
+            return;
+        }
+    };
+
+    println!(
+        "Listening on UDP: {}",
+        worker.local_addr().unwrap_or(config.bind_addr)
+    );
+
+    // Initialize cross-thread bounded packet queues
+    let ingress_queue = SpscPacketQueue::<1024>::new();
+    let egress_queue = SpscPacketQueue::<1024>::new();
+
+    // Initialize Agones lifecycle
+    let mut agones = AgonesClient::new(config.agones_enabled, config.agones_port);
+    if let Err(e) = agones.ready() {
+        eprintln!("Agones ready failed (ignorable in standalone): {e}");
+    }
+
+    // Initialize high-resolution tick coordinator
+    let mut coordinator = TickCoordinator::new(config.tick_rate_hz);
+
+    println!("Starting authoritative 20 Hz simulation tick loop...");
+
+    // Demonstration runner: tick 5 times on startup before yielding to daemon mode
+    for _ in 0..5 {
+        let tick_start = Instant::now();
+
+        // 1. Drain ingress packets
+        let _received = worker.drain_ingress(&ingress_queue, 64);
+
+        // 2. Simulation step (world zones, spatial re-indexing, AoI dispatches)
+        // ...
+
+        // 3. Flush egress packets
+        let _sent = worker.flush_egress(&egress_queue, 64);
+
+        let execution_duration = tick_start.elapsed();
+        coordinator.record_tick_execution(execution_duration);
+        coordinator.sleep_headroom(execution_duration);
+    }
+
+    let metrics = coordinator.metrics();
+    println!(
+        "Startup validation complete. Total ticks: {}, Overruns: {}, Shedding level: {:?}",
+        metrics.total_ticks, metrics.overrun_ticks, metrics.shedding_level
+    );
+
+    // Sleep briefly before normal daemon loop
+    std::thread::sleep(Duration::from_millis(50));
 }
 
 #[cfg(test)]
 mod tests {
-    use super::ServerConfig;
+    use super::*;
 
     #[test]
     fn test_default_server_config() {
         let config = ServerConfig::default();
         assert_eq!(config.tick_rate_hz, 20);
         assert_eq!(config.default_zone.0, 1);
+        assert_eq!(config.tick_interval_millis(), 50);
     }
 }
