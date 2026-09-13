@@ -10,6 +10,7 @@ pub mod agones;
 pub mod alerting;
 pub mod clock;
 pub mod config;
+pub mod continental;
 pub mod facade;
 pub mod io;
 pub mod memory_budget;
@@ -29,6 +30,11 @@ pub use alerting::{
 };
 pub use clock::{ClockGovernor, ClockGovernorConfig, ClockMetrics, TickPacingAction};
 pub use config::ServerConfig;
+pub use continental::{
+    ContinentalMetrics, ContinentalOrchestrator, OP_PREDICTIVE_MIGRATION_COMMIT,
+    OP_PREDICTIVE_MIGRATION_PRE_AUTH, OP_SHARD_REBALANCE, OP_TERRAIN_CHUNK_DATA,
+    OP_TERRAIN_CHUNK_REQUEST,
+};
 pub use facade::{AppError, EidolonApp, EidolonAppBuilder, ServerEntity};
 pub use io::NetworkIoWorker;
 pub use memory_budget::{

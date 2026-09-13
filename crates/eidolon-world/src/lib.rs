@@ -7,6 +7,7 @@
 #![warn(missing_docs)]
 
 pub mod ability;
+pub mod adaptive_shard;
 pub mod building;
 pub mod chat;
 pub mod chunk_manifest;
@@ -20,6 +21,7 @@ pub mod instance;
 pub mod interior;
 pub mod partition;
 pub mod party;
+pub mod predictive_migration;
 pub mod reconstruction;
 pub mod replicated_journal;
 pub mod transaction;
@@ -30,6 +32,11 @@ pub mod zone;
 pub use ability::{
     get_ability_definition, AbilityDefinition, AbilityShape, CastInterruptedReason, CastState,
     CooldownTracker,
+};
+pub use adaptive_shard::{
+    AdaptiveShardManager, RebalanceReason, SectorMetadata, ShardMetrics, ShardRebalanceAction,
+    DEFAULT_CPU_OVERLOAD_MICROS, DEFAULT_HOTSPOT_ENTITY_THRESHOLD,
+    DEFAULT_WILDERNESS_ENTITY_THRESHOLD, MAX_WORKER_SHARDS,
 };
 pub use building::{StructureInstance, StructureManager, StructurePiece};
 pub use chat::{
@@ -62,6 +69,10 @@ pub use partition::{
     DEFAULT_LEASE_DURATION_TICKS, DEFAULT_PARTITION_TIMEOUT_TICKS,
 };
 pub use party::{Party, PartyManager, PartyMember, MAX_GROUP_MEMBERS};
+pub use predictive_migration::{
+    PredictiveMigrationPreAuth, PredictiveSeamPredictor, DEFAULT_LOOKAHEAD_MILLIS,
+    DEFAULT_PRE_AUTH_TTL_TICKS, MAX_ACTIVE_PRE_AUTHS,
+};
 pub use reconstruction::{
     decode_position_payload, encode_position_payload, reconstruct_zone_from_wal, CheckpointEntity,
     ZoneCheckpoint,

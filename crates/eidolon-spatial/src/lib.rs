@@ -9,6 +9,7 @@
 pub mod aoi;
 pub mod bvh;
 pub mod grid;
+pub mod hlod;
 pub mod tier;
 
 pub use aoi::{
@@ -21,6 +22,7 @@ pub use grid::{
     CellCoord, SpatialError, SpatialHashGrid, SpatialQueryResult, CELL_HORIZONTAL_SIZE,
     CELL_VERTICAL_SIZE,
 };
+pub use hlod::{HlodGrid, MacroTileCoord, TerrainTile, MACRO_TILE_EDGE_METERS};
 pub use tier::{
     FrequencyTier, TierModel, IMMEDIATE_DEMOTION_DIST_SQ, IMMEDIATE_PROMOTION_DIST_SQ,
     MID_DEMOTION_DIST_SQ, MID_PROMOTION_DIST_SQ, TIER5_HORIZON_DEMOTION_DIST_SQ,

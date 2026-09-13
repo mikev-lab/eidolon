@@ -7,12 +7,15 @@ use std::collections::HashMap;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::path::{Path, PathBuf};
 
+use crate::continental::ContinentalOrchestrator;
 use eidolon_core::fixed::{Fixed64, Vec3Fix};
 use eidolon_core::geom::SpatialGeometry;
+use eidolon_core::global_coord::GlobalCoord;
 use eidolon_core::item::EquipmentSlot;
 use eidolon_core::kinematics::{extrapolate, KinematicState};
 use eidolon_core::quant::{QuantizedCellCoord, QuantizedYaw};
 use eidolon_core::structure::{InteriorItemRecord, MaterialType, PieceType, SnapSocket};
+use eidolon_core::vehicle::VehicleKinematics;
 use eidolon_net::auth::{
     compute_auth_cookie, ConnectChallengeRequest, ConnectChallengeResponse, ConnectFinalizeRequest,
     ConnectFinalizeResponse, CHALLENGE_REQ_LEN, FINALIZE_REQ_LEN, NONCE_LEN,
@@ -22,6 +25,7 @@ use eidolon_net::governor::{BandwidthGovernor, DensityProfile};
 use eidolon_net::packet::PacketHeader;
 use eidolon_net::protocol::{ChannelType, PacketType, HEADER_SIZE, MAX_PACKET_SIZE};
 use eidolon_spatial::bvh::RayHit;
+use eidolon_spatial::hlod::TerrainTile;
 use eidolon_spatial::tier::FrequencyTier;
 use eidolon_spatial::SpatialHashGrid;
 use eidolon_world::ability::{get_ability_definition, AbilityShape, CastState, CooldownTracker};
@@ -32,6 +36,7 @@ use eidolon_world::durable_journal::DurableFileJournal;
 use eidolon_world::equipment::EquipmentContainer;
 use eidolon_world::interior::InteriorCellManager;
 use eidolon_world::party::{PartyManager, PartyMember};
+use eidolon_world::predictive_migration::PredictiveMigrationPreAuth;
 use eidolon_world::transaction::TransactionManager;
 use eidolon_world::wal::WalRecord;
 use eidolon_world::WorldError;
@@ -209,6 +214,7 @@ impl EidolonAppBuilder {
             structure_manager: StructureManager::new(),
             interior_manager: InteriorCellManager::new(),
             chunk_manifest_manager: ChunkManifestManager::new(),
+            continental_orchestrator: None,
         })
     }
 }
@@ -238,6 +244,7 @@ pub struct EidolonApp {
     structure_manager: StructureManager,
     interior_manager: InteriorCellManager,
     chunk_manifest_manager: ChunkManifestManager,
+    continental_orchestrator: Option<ContinentalOrchestrator>,
 }
 
 impl EidolonApp {
@@ -1656,5 +1663,99 @@ impl EidolonApp {
         payload[5..9].copy_from_slice(&item_id.to_be_bytes());
         payload[9..13].copy_from_slice(&amount.to_be_bytes());
         self.send_reliable_event_to_peer(peer, &payload);
+    }
+
+    /// Enables continental topology and dynamic multi-shard orchestration.
+    pub fn enable_continental_topology(
+        &mut self,
+        local_shard_id: u32,
+        num_shards: usize,
+    ) -> Result<(), AppError> {
+        let orchestrator = ContinentalOrchestrator::new(local_shard_id, num_shards)?;
+        self.continental_orchestrator = Some(orchestrator);
+        Ok(())
+    }
+
+    /// Returns a reference to the continental orchestrator if enabled.
+    pub fn continental_orchestrator(&self) -> Option<&ContinentalOrchestrator> {
+        self.continental_orchestrator.as_ref()
+    }
+
+    /// Returns a mutable reference to the continental orchestrator if enabled.
+    pub fn continental_orchestrator_mut(&mut self) -> Option<&mut ContinentalOrchestrator> {
+        self.continental_orchestrator.as_mut()
+    }
+
+    /// Assigns a 256m sector to a worker shard within the continental topology.
+    pub fn assign_continental_sector(
+        &mut self,
+        sector_x: i32,
+        sector_z: i32,
+        shard_id: u32,
+    ) -> Result<(), AppError> {
+        let orch = self
+            .continental_orchestrator
+            .as_mut()
+            .ok_or(AppError::World(WorldError::ShardNotFound(shard_id)))?;
+        orch.shard_manager_mut()
+            .assign_sector(sector_x, sector_z, shard_id)
+            .map_err(AppError::World)
+    }
+
+    /// Queries the worker shard currently assigned to a 256m continental sector.
+    pub fn query_shard_for_sector(&self, sector_x: i32, sector_z: i32) -> Option<u32> {
+        self.continental_orchestrator
+            .as_ref()?
+            .shard_manager()
+            .get_shard_for_sector(sector_x, sector_z)
+    }
+
+    /// Loads a 512m macro terrain tile into the continental HLOD grid.
+    pub fn load_macro_terrain_tile(&mut self, tile: TerrainTile) -> Result<(), AppError> {
+        let orch = self
+            .continental_orchestrator
+            .as_mut()
+            .ok_or(AppError::World(WorldError::TerrainTileNotFound(0, 0)))?;
+        orch.load_terrain_tile(tile);
+        Ok(())
+    }
+
+    /// Samples macro terrain ground elevation at a hierarchical global coordinate.
+    pub fn sample_terrain_elevation(&mut self, coord: &GlobalCoord) -> Option<Fixed64> {
+        let orch = self.continental_orchestrator.as_mut()?;
+        orch.sample_terrain_elevation(coord)
+    }
+
+    /// Raycasts against continental terrain heightfields.
+    pub fn raycast_terrain(
+        &mut self,
+        origin: &GlobalCoord,
+        dir: Vec3Fix,
+        max_distance: Fixed64,
+    ) -> Option<RayHit> {
+        let orch = self.continental_orchestrator.as_mut()?;
+        orch.raycast_terrain(origin, dir, max_distance)
+    }
+
+    /// Evaluates entity movement and issues a predictive boundary migration pre-auth token.
+    pub fn evaluate_predictive_migration(
+        &mut self,
+        entity_id: u32,
+        coord: GlobalCoord,
+        velocity: Vec3Fix,
+    ) -> Option<PredictiveMigrationPreAuth> {
+        let orch = self.continental_orchestrator.as_mut()?;
+        orch.evaluate_entity_movement(entity_id, coord, velocity)
+    }
+
+    /// Evaluates high-speed vehicle movement and issues a predictive boundary migration pre-auth token.
+    pub fn evaluate_vehicle_predictive_migration(
+        &mut self,
+        entity_id: u32,
+        coord: GlobalCoord,
+        vehicle: &VehicleKinematics,
+    ) -> Option<PredictiveMigrationPreAuth> {
+        let orch = self.continental_orchestrator.as_mut()?;
+        orch.evaluate_vehicle_movement(entity_id, coord, vehicle)
     }
 }

@@ -9,6 +9,7 @@
 pub mod authority;
 pub mod fixed;
 pub mod geom;
+pub mod global_coord;
 pub mod identity;
 pub mod item;
 pub mod kinematics;
@@ -17,10 +18,12 @@ pub mod morton;
 pub mod quant;
 pub mod structure;
 pub mod trace;
+pub mod vehicle;
 
 pub use authority::{AuthorityError, AuthorityFencer, AuthorityToken, AUTHORITY_TOKEN_LEN};
 pub use fixed::{Fixed64, Vec3Fix};
 pub use geom::SpatialGeometry;
+pub use global_coord::{GlobalCoord, SECTOR_EDGE_FIXED, SECTOR_EDGE_METERS};
 pub use identity::{
     AccountId, CharacterAuthorization, CharacterId, IdentityError, IdentityRegistry, SessionTicket,
 };
@@ -48,6 +51,7 @@ pub use structure::{
     STANDARD_GRID_VERTICAL_METERS,
 };
 pub use trace::{TraceContext, TraceRingBuffer, TraceSpan};
+pub use vehicle::{VehicleKinematics, VehicleType};
 
 #[cfg(test)]
 mod tests {

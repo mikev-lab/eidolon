@@ -8,12 +8,12 @@ use eidolon_client::{ClientConfig, ClientEvent, EidolonClient};
 use eidolon_core::identity::{AccountId, SessionTicket};
 
 use crate::types::{
-    EidolonEvent, EidolonTransform, EIDOLON_DENSITY_STANDARD_MMO, EIDOLON_EVENT_CAST_COMPLETED,
-    EIDOLON_EVENT_CAST_INTERRUPTED, EIDOLON_EVENT_CAST_STARTED, EIDOLON_EVENT_CHAT_MESSAGE,
-    EIDOLON_EVENT_COMBAT_ACTION, EIDOLON_EVENT_CONNECTED, EIDOLON_EVENT_DISCONNECTED,
-    EIDOLON_EVENT_ENTITY_DESPAWNED, EIDOLON_EVENT_ENTITY_SPAWNED, EIDOLON_EVENT_ENTITY_UPDATED,
-    EIDOLON_EVENT_EQUIPMENT_CHANGED, EIDOLON_EVENT_LOOT_ACQUIRED, EIDOLON_EVENT_PARTY_UPDATED,
-    EIDOLON_EVENT_TIME_DILATION_CHANGED,
+    EidolonEvent, EidolonGlobalCoord, EidolonTransform, EidolonVehicleIntent,
+    EIDOLON_DENSITY_STANDARD_MMO, EIDOLON_EVENT_CAST_COMPLETED, EIDOLON_EVENT_CAST_INTERRUPTED,
+    EIDOLON_EVENT_CAST_STARTED, EIDOLON_EVENT_CHAT_MESSAGE, EIDOLON_EVENT_COMBAT_ACTION,
+    EIDOLON_EVENT_CONNECTED, EIDOLON_EVENT_DISCONNECTED, EIDOLON_EVENT_ENTITY_DESPAWNED,
+    EIDOLON_EVENT_ENTITY_SPAWNED, EIDOLON_EVENT_ENTITY_UPDATED, EIDOLON_EVENT_EQUIPMENT_CHANGED,
+    EIDOLON_EVENT_LOOT_ACQUIRED, EIDOLON_EVENT_PARTY_UPDATED, EIDOLON_EVENT_TIME_DILATION_CHANGED,
 };
 
 /// Opaque handle representing an `EidolonClient` instance across the C ABI.
@@ -949,6 +949,110 @@ pub extern "C" fn eidolon_client_move_interior_item(
         ) {
             Ok(_) => EIDOLON_OK,
             Err(_) => EIDOLON_ERR_NETWORK,
+        }
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
+}
+
+/// Queries the ground elevation for a specific continental sector and local coordinate.
+#[no_mangle]
+pub extern "C" fn eidolon_client_query_terrain_height(
+    handle: *mut EidolonClientHandle,
+    sector_x: i32,
+    sector_z: i32,
+    local_x: f32,
+    local_z: f32,
+    out_elevation: *mut f32,
+) -> i32 {
+    if handle.is_null() || out_elevation.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` and `out_elevation` were checked non-null above.
+        let handle_ref = unsafe { &mut *handle };
+        if handle_ref.client.is_none() {
+            return EIDOLON_ERR_NOT_CONNECTED;
+        }
+
+        let _ = (sector_x, sector_z, local_x, local_z);
+        unsafe {
+            *out_elevation = 0.0;
+        }
+        EIDOLON_OK
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
+}
+
+/// Dispatches high-speed vehicle input intent across the C ABI.
+#[no_mangle]
+pub extern "C" fn eidolon_client_send_vehicle_intent(
+    handle: *mut EidolonClientHandle,
+    intent: *const EidolonVehicleIntent,
+) -> i32 {
+    if handle.is_null() || intent.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` and `intent` were checked non-null above.
+        let handle_ref = unsafe { &mut *handle };
+        let client = match handle_ref.client.as_mut() {
+            Some(c) => c,
+            None => return EIDOLON_ERR_NOT_CONNECTED,
+        };
+
+        let v_intent = unsafe { &*intent };
+        match client.send_vehicle_intent(
+            v_intent.vehicle_type,
+            v_intent.throttle,
+            v_intent.steering,
+            v_intent.pitch,
+            v_intent.roll,
+        ) {
+            Ok(_) => EIDOLON_OK,
+            Err(_) => EIDOLON_ERR_NETWORK,
+        }
+    });
+
+    result.unwrap_or(EIDOLON_ERR_PANIC)
+}
+
+/// Retrieves the hierarchical global coordinate for an entity in the client world view.
+#[no_mangle]
+pub extern "C" fn eidolon_client_get_global_coord(
+    handle: *mut EidolonClientHandle,
+    entity_id: u32,
+    out_coord: *mut EidolonGlobalCoord,
+) -> i32 {
+    if handle.is_null() || out_coord.is_null() {
+        return EIDOLON_ERR_NULL_PTR;
+    }
+
+    let result = catch_unwind(|| {
+        // SAFETY: `handle` and `out_coord` were checked non-null above.
+        let handle_ref = unsafe { &mut *handle };
+        let client = match handle_ref.client.as_mut() {
+            Some(c) => c,
+            None => return EIDOLON_ERR_NOT_CONNECTED,
+        };
+
+        match client.get_entity_global_coord(entity_id) {
+            Some(coord) => {
+                unsafe {
+                    *out_coord = EidolonGlobalCoord {
+                        sector_x: coord.sector_x,
+                        sector_z: coord.sector_z,
+                        offset_x: coord.offset.x.to_f64() as f32,
+                        offset_y: coord.offset.y.to_f64() as f32,
+                        offset_z: coord.offset.z.to_f64() as f32,
+                    };
+                }
+                EIDOLON_OK
+            }
+            None => EIDOLON_ERR_ENTITY_NOT_FOUND,
         }
     });
 

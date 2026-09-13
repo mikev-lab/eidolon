@@ -80,6 +80,35 @@ namespace Eidolon
     }
 
     /// <summary>
+    /// Hierarchical global coordinate for continental and planetary scale.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct EidolonGlobalCoord
+    {
+        public int SectorX;
+        public int SectorZ;
+        public float OffsetX;
+        public float OffsetY;
+        public float OffsetZ;
+    }
+
+    /// <summary>
+    /// High-speed vehicle kinematic input descriptor.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct EidolonVehicleIntent
+    {
+        public byte VehicleType;
+        public byte Throttle;
+        public sbyte Steering;
+        public sbyte Pitch;
+        public sbyte Roll;
+        private byte _pad0;
+        private byte _pad1;
+        private byte _pad2;
+    }
+
+    /// <summary>
     /// Egress bandwidth density profiles.
     /// </summary>
     public static class EidolonDensityProfile
@@ -240,6 +269,29 @@ namespace Eidolon
             float yawDegrees
         );
 
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int eidolon_client_query_terrain_height(
+            IntPtr handle,
+            int sectorX,
+            int sectorZ,
+            float localX,
+            float localZ,
+            out float outElevation
+        );
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int eidolon_client_send_vehicle_intent(
+            IntPtr handle,
+            ref EidolonVehicleIntent intent
+        );
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int eidolon_client_get_global_coord(
+            IntPtr handle,
+            uint entityId,
+            out EidolonGlobalCoord outCoord
+        );
+
         private IntPtr _handle;
         private readonly NativeEventCallback _callbackDelegate;
         private bool _disposed;
@@ -264,6 +316,9 @@ namespace Eidolon
         public event Action<uint> OnInteriorEntered;
         public event Action<uint> OnInteriorExited;
         public event Action<uint, uint, float, float, float, float> OnInteriorItemUpdated;
+        public event Action<uint, uint, int, int> OnPredictiveMigration;
+        public event Action<int, int, uint> OnShardRebalanced;
+        public event Action<int, int> OnTerrainChunkLoaded;
 
         public bool IsConnected => _handle != IntPtr.Zero && eidolon_client_is_connected(_handle) == 1;
 
@@ -392,6 +447,29 @@ namespace Eidolon
             return eidolon_client_move_interior_item(_handle, cellId, itemInstanceId, localX, localY, localZ, yawDegrees) == 0;
         }
 
+        public float QueryTerrainHeight(int sectorX, int sectorZ, float localX, float localZ)
+        {
+            ThrowIfDisposed();
+            int rc = eidolon_client_query_terrain_height(_handle, sectorX, sectorZ, localX, localZ, out float elevation);
+            if (rc != 0) throw new InvalidOperationException($"Failed to query terrain height: error {rc}");
+            return elevation;
+        }
+
+        public void SendVehicleIntent(EidolonVehicleIntent intent)
+        {
+            ThrowIfDisposed();
+            int rc = eidolon_client_send_vehicle_intent(_handle, ref intent);
+            if (rc != 0) throw new InvalidOperationException($"Failed to send vehicle intent: error {rc}");
+        }
+
+        public EidolonGlobalCoord GetGlobalCoord(uint entityId)
+        {
+            ThrowIfDisposed();
+            int rc = eidolon_client_get_global_coord(_handle, entityId, out EidolonGlobalCoord coord);
+            if (rc != 0) throw new InvalidOperationException($"Entity {entityId} not found in world view: error {rc}");
+            return coord;
+        }
+
         public bool TryExtrapolateEntity(uint entityId, float deltaTime, out EidolonTransform transform)
         {
             ThrowIfDisposed();
@@ -482,6 +560,23 @@ namespace Eidolon
                     break;
                 case 19: // InteriorItemUpdated
                     OnInteriorItemUpdated?.Invoke((uint)evt.Param1, (uint)evt.Param2, evt.X, evt.Y, evt.Z, evt.YawDegrees);
+                    break;
+                case 20: // PredictiveMigration
+                    uint targetShard = (uint)(evt.Param1 >> 32);
+                    int targetSecX = (int)(evt.Param1 & 0xFFFFFFFF);
+                    int targetSecZ = (int)evt.Param2;
+                    OnPredictiveMigration?.Invoke(evt.EntityId, targetShard, targetSecX, targetSecZ);
+                    break;
+                case 21: // ShardRebalanced
+                    int sx = (int)(evt.Param1 >> 32);
+                    int sz = (int)(evt.Param1 & 0xFFFFFFFF);
+                    uint toShard = (uint)evt.Param2;
+                    OnShardRebalanced?.Invoke(sx, sz, toShard);
+                    break;
+                case 22: // TerrainChunkLoaded
+                    int tileX = (int)(evt.Param1 >> 32);
+                    int tileZ = (int)(evt.Param1 & 0xFFFFFFFF);
+                    OnTerrainChunkLoaded?.Invoke(tileX, tileZ);
                     break;
             }
         }

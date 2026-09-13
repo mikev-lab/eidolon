@@ -51,6 +51,9 @@ extern "C" {
 #define EIDOLON_EVENT_INTERIOR_ENTERED 17
 #define EIDOLON_EVENT_INTERIOR_EXITED 18
 #define EIDOLON_EVENT_INTERIOR_ITEM_UPDATED 19
+#define EIDOLON_EVENT_PREDICTIVE_MIGRATION 20
+#define EIDOLON_EVENT_SHARD_REBALANCED 21
+#define EIDOLON_EVENT_TERRAIN_CHUNK_LOADED 22
 
 /* ========================================================================= */
 /* Density Profiles                                                          */
@@ -123,6 +126,29 @@ typedef struct EidolonInteriorItem {
     uint8_t flags;
     uint8_t _padding[3];
 } EidolonInteriorItem;
+
+/**
+ * Hierarchical global coordinate for continental and planetary scale.
+ */
+typedef struct EidolonGlobalCoord {
+    int32_t sector_x;
+    int32_t sector_z;
+    float offset_x;
+    float offset_y;
+    float offset_z;
+} EidolonGlobalCoord;
+
+/**
+ * High-speed vehicle kinematic input descriptor.
+ */
+typedef struct EidolonVehicleIntent {
+    uint8_t vehicle_type;
+    uint8_t throttle;
+    int8_t steering;
+    int8_t pitch;
+    int8_t roll;
+    uint8_t _padding[3];
+} EidolonVehicleIntent;
 
 /**
  * Opaque handle representing an active EidolonClient instance.
@@ -444,6 +470,52 @@ int32_t eidolon_client_move_interior_item(
     float local_y,
     float local_z,
     float yaw_degrees
+);
+
+/**
+ * Queries the macro terrain ground elevation at a specific sector and local offset.
+ *
+ * @param handle Valid client handle.
+ * @param sector_x Discrete 256m sector index along X axis.
+ * @param sector_z Discrete 256m sector index along Z axis.
+ * @param local_x Sector-local coordinate X in meters.
+ * @param local_z Sector-local coordinate Z in meters.
+ * @param out_elevation Pointer to receive interpolated ground elevation in meters.
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_query_terrain_height(
+    EidolonClientHandle* handle,
+    int32_t sector_x,
+    int32_t sector_z,
+    float local_x,
+    float local_z,
+    float* out_elevation
+);
+
+/**
+ * Dispatches high-speed vehicle control intent inputs to authoritative server.
+ *
+ * @param handle Valid client handle.
+ * @param intent Pointer to vehicle input descriptor.
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_send_vehicle_intent(
+    EidolonClientHandle* handle,
+    const EidolonVehicleIntent* intent
+);
+
+/**
+ * Retrieves the hierarchical global coordinate for an entity in the client world view.
+ *
+ * @param handle Valid client handle.
+ * @param entity_id Authoritative entity identifier.
+ * @param out_coord Pointer to receive hierarchical global coordinate.
+ * @return EIDOLON_OK on success, or negative error code.
+ */
+int32_t eidolon_client_get_global_coord(
+    EidolonClientHandle* handle,
+    uint32_t entity_id,
+    EidolonGlobalCoord* out_coord
 );
 
 #ifdef __cplusplus

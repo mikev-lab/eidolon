@@ -231,6 +231,35 @@ public:
     }
 
     /**
+     * Queries the macro terrain ground elevation at a specific sector and local offset.
+     */
+    std::optional<float> query_terrain_height(int32_t sector_x, int32_t sector_z, float local_x, float local_z) {
+        float elevation = 0.0f;
+        if (eidolon_client_query_terrain_height(m_handle.get(), sector_x, sector_z, local_x, local_z, &elevation) == EIDOLON_OK) {
+            return elevation;
+        }
+        return std::nullopt;
+    }
+
+    /**
+     * Dispatches high-speed vehicle control intent inputs to authoritative server.
+     */
+    bool send_vehicle_intent(const EidolonVehicleIntent& intent) {
+        return eidolon_client_send_vehicle_intent(m_handle.get(), &intent) == EIDOLON_OK;
+    }
+
+    /**
+     * Retrieves the hierarchical global coordinate for an entity in the client world view.
+     */
+    std::optional<EidolonGlobalCoord> get_global_coord(uint32_t entity_id) {
+        EidolonGlobalCoord coord{};
+        if (eidolon_client_get_global_coord(m_handle.get(), entity_id, &coord) == EIDOLON_OK) {
+            return coord;
+        }
+        return std::nullopt;
+    }
+
+    /**
      * Returns the raw unmanaged handle for custom extensions.
      */
     EidolonClientHandle* raw_handle() const {

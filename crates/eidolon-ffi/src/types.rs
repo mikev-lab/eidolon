@@ -89,6 +89,12 @@ pub const EIDOLON_EVENT_INTERIOR_ENTERED: u32 = 17;
 pub const EIDOLON_EVENT_INTERIOR_EXITED: u32 = 18;
 /// Event type constant: Decorative interior item placed or modified.
 pub const EIDOLON_EVENT_INTERIOR_ITEM_UPDATED: u32 = 19;
+/// Event type constant: Predictive boundary migration pre-authorization token issued.
+pub const EIDOLON_EVENT_PREDICTIVE_MIGRATION: u32 = 20;
+/// Event type constant: Continental shard boundary rebalanced.
+pub const EIDOLON_EVENT_SHARD_REBALANCED: u32 = 21;
+/// Event type constant: Macro HLOD terrain chunk loaded.
+pub const EIDOLON_EVENT_TERRAIN_CHUNK_LOADED: u32 = 22;
 
 /// Density profile constant: Ultra-low bandwidth mobile / constrained network (1.2 KB/s budget).
 pub const EIDOLON_DENSITY_BUDGET_MOBILE: u32 = 0;
@@ -146,5 +152,39 @@ pub struct EidolonInteriorItem {
     /// Placement and interaction flags.
     pub flags: u8,
     /// Memory alignment padding.
+    pub _padding: [u8; 3],
+}
+
+/// Standard C-compatible hierarchical global coordinate for continental and planetary scale.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[repr(C)]
+pub struct EidolonGlobalCoord {
+    /// Discrete 256m sector index along X axis.
+    pub sector_x: i32,
+    /// Discrete 256m sector index along Z axis.
+    pub sector_z: i32,
+    /// Sector-local continuous offset X in meters (0.0 <= offset_x < 256.0).
+    pub offset_x: f32,
+    /// Elevation coordinate Y in meters.
+    pub offset_y: f32,
+    /// Sector-local continuous offset Z in meters (0.0 <= offset_z < 256.0).
+    pub offset_z: f32,
+}
+
+/// Standard C-compatible vehicle kinematic input descriptor for high-speed movement.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[repr(C)]
+pub struct EidolonVehicleIntent {
+    /// Vehicle classification (0 = GroundSpeeder, 1 = SwoopBike, 2 = Supercar, 3 = Aircraft, 4 = FlyingMount).
+    pub vehicle_type: u8,
+    /// Throttle percentage input (0 to 100).
+    pub throttle: u8,
+    /// Steering input (-100 = full left, +100 = full right).
+    pub steering: i8,
+    /// Pitch angle (-90 to +90 degrees).
+    pub pitch: i8,
+    /// Roll banking angle (-90 to +90 degrees).
+    pub roll: i8,
+    /// Memory alignment padding to 8 bytes.
     pub _padding: [u8; 3],
 }

@@ -375,6 +375,62 @@ impl EidolonClient {
         Ok(())
     }
 
+    /// Dispatches high-speed vehicle intent inputs to authoritative server.
+    pub fn send_vehicle_intent(
+        &mut self,
+        vehicle_type: u8,
+        throttle: u8,
+        steering: i8,
+        pitch: i8,
+        roll: i8,
+    ) -> Result<(), ClientError> {
+        if !self.is_connected() {
+            return Err(ClientError::NotConnected);
+        }
+
+        let header = PacketHeader::new(
+            ChannelType::UnreliableSequenced,
+            PacketType::StateUpdate,
+            self.send_seq,
+            self.recv_seq,
+            self.ack_mask,
+        );
+        self.send_seq = self.send_seq.wrapping_add(1);
+
+        let mut wire_buf = [0u8; 64];
+        let hdr_len = header.write_to(&mut wire_buf)?;
+
+        let mut idx = hdr_len;
+        wire_buf[idx] = 0xFE; // Vehicle intent marker
+        idx += 1;
+        wire_buf[idx] = vehicle_type;
+        idx += 1;
+        wire_buf[idx] = throttle;
+        idx += 1;
+        wire_buf[idx] = steering as u8;
+        idx += 1;
+        wire_buf[idx] = pitch as u8;
+        idx += 1;
+        wire_buf[idx] = roll as u8;
+        idx += 1;
+
+        self.socket
+            .send_to(&wire_buf[..idx], self.config.server_addr)?;
+        Ok(())
+    }
+
+    /// Queries the hierarchical global coordinate for an entity in the client world view.
+    pub fn get_entity_global_coord(
+        &self,
+        entity_id: u32,
+    ) -> Option<eidolon_core::global_coord::GlobalCoord> {
+        let ent = self.world_view.get_entity(entity_id)?;
+        let pos = ent.global_position();
+        Some(eidolon_core::global_coord::GlobalCoord::from_continuous(
+            pos.x, pos.y, pos.z,
+        ))
+    }
+
     /// Dispatches reliable gameplay action (combat attack, item use, interaction).
     pub fn send_action(
         &mut self,

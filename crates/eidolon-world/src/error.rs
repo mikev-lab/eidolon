@@ -125,6 +125,14 @@ pub enum WorldError {
     InteriorCellNotFound(u32),
     /// Interior cell capacity reached (maximum 3,000 items per building).
     InteriorCellFull,
+    /// Requested worker shard identifier was not found.
+    ShardNotFound(u32),
+    /// Requested macro terrain tile was not found at specified sector coordinate.
+    TerrainTileNotFound(i32, i32),
+    /// Predictive migration pre-authorization token has expired.
+    PreAuthExpired,
+    /// Predictive migration pre-authorization token is invalid or already consumed.
+    PreAuthInvalid,
 }
 
 impl fmt::Display for WorldError {
@@ -208,6 +216,18 @@ impl fmt::Display for WorldError {
             Self::InteriorCellFull => {
                 write!(f, "Interior cell item capacity exceeded (max 3,000 items)")
             }
+            Self::ShardNotFound(id) => write!(f, "Worker shard {id} not found"),
+            Self::TerrainTileNotFound(x, z) => {
+                write!(f, "Terrain tile at sector ({x}, {z}) not found")
+            }
+            Self::PreAuthExpired => write!(
+                f,
+                "Predictive migration pre-authorization token has expired"
+            ),
+            Self::PreAuthInvalid => write!(
+                f,
+                "Predictive migration pre-authorization token is invalid or consumed"
+            ),
         }
     }
 }
