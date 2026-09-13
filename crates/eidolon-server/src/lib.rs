@@ -11,7 +11,9 @@ pub mod alerting;
 pub mod clock;
 pub mod config;
 pub mod io;
+pub mod memory_budget;
 pub mod metrics;
+pub mod platform_bench;
 pub mod queue;
 pub mod rolling;
 pub mod soak;
@@ -26,9 +28,14 @@ pub use alerting::{
 pub use clock::{ClockGovernor, ClockGovernorConfig, ClockMetrics, TickPacingAction};
 pub use config::ServerConfig;
 pub use io::NetworkIoWorker;
+pub use memory_budget::{
+    audit_system_struct_sizes, PlayerMemoryBudget, StructMemoryProfile,
+    MAX_PLAYER_MEMORY_CEILING_BYTES,
+};
 pub use metrics::{
     LatencyHistogram, PrometheusExporter, ServerMetrics, ZoneMetrics, DEFAULT_TICK_BUCKETS_MICROS,
 };
+pub use platform_bench::{BenchmarkMetric, PlatformBenchmarkReport, PlatformBenchmarkRunner};
 pub use queue::{NetworkPacket, SpscPacketQueue};
 pub use rolling::{RollingClusterNode, RollingUpgradeSimulator, UpgradeSession};
 pub use soak::{SoakConfig, SoakTelemetry, SoakTestRunner};

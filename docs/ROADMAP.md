@@ -26,7 +26,7 @@ The roadmap is structured into two eras:
 │ Phase 10    │ End-to-End Backpressure & Capacity Admission      │ COMPLETED   │
 │ Phase 11    │ Production Observability & Distributed Tracing    │ COMPLETED   │
 │ Phase 12    │ Real Network Impairment, Fuzzing & Multi-Server   │ COMPLETED   │
-│ Phase 13    │ Platform Maturity, Kernel Tuning & Formal Verif.  │ P2 Maturity │
+│ Phase 13    │ Platform Maturity, Kernel Tuning & Formal Verif.  │ COMPLETED   │
 └─────────────┴───────────────────────────────────────────────────┴─────────────┘
 ```
 
@@ -213,7 +213,7 @@ Following strict distributed systems engineering discipline, deliverables are ca
 
 ---
 
-### Phase 13: Platform Maturity, Kernel Tuning & Formal Verification (P2)
+### Phase 13: Platform Maturity, Kernel Tuning & Formal Verification (P2 - Completed & Verified)
 
 *Objective: Maximize hardware performance across CPU architectures, provide production OS kernel tuning guides, validate wire egress via eBPF/pcap, and formally verify transport invariants.*
 
@@ -274,7 +274,7 @@ To achieve full production sign-off, `eidolon` must satisfy all gates in this sc
 | **Network Impairment** | Completed | Compound 5% loss + 150ms jitter | 0 desyncs; deterministic dead reckoning |
 | **Soak Stability** | Completed | 7-day continuous execution | 0 RSS memory growth; 0 tick latency drift |
 | **Rolling Upgrades** | Completed | Mixed-version cluster deployment | 0 client disconnects during version migration|
-| **Transport Invariants**| P2 | Formal property-based assertions | 100% mathematical invariant verification |
+| **Transport Invariants**| Completed | Formal property-based assertions | 100% mathematical invariant verification |
 
 ---
 

@@ -16,10 +16,12 @@ pub mod error;
 pub mod fuzz;
 pub mod impairment;
 pub mod packet;
+pub mod pcap;
 pub mod protocol;
 pub mod queue;
 pub mod quota;
 pub mod version;
+pub mod wire_accounting;
 
 // Re-export primary types for ergonomic crate consumption.
 pub use admission::{AdmissionConfig, AdmissionController, AdmissionMetrics, PriorityClass};
@@ -45,6 +47,7 @@ pub use impairment::{
     NetworkImpairmentHarness,
 };
 pub use packet::{PacketHeader, PacketView};
+pub use pcap::{PcapWriter, LINKTYPE_ETHERNET, PCAP_MAGIC_NUMBER};
 pub use protocol::{
     ChannelType, PacketType, HEADER_SIZE, MAX_PACKET_SIZE, PROTOCOL_MAGIC, PROTOCOL_VERSION,
 };
@@ -56,3 +59,4 @@ pub use quota::{
 pub use version::{
     ProtocolFeatures, ProtocolNegotiator, MAX_SUPPORTED_VERSION, MIN_SUPPORTED_VERSION,
 };
+pub use wire_accounting::{BandwidthSummary, PhysicalFrameBreakdown, SpatialBandwidthProfile};
