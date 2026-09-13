@@ -23,8 +23,8 @@ The roadmap is structured into two eras:
 │ Phase 1-7   │ Core Simulation, Quantization, Transport & AoI    │ COMPLETED   │
 │ Phase 8     │ Distributed Authority, Session Security & Quotas  │ COMPLETED   │
 │ Phase 9     │ Authoritative Persistence & Crash Reconstruction  │ COMPLETED   │
-│ Phase 10    │ End-to-End Backpressure & Capacity Admission      │ P1 Launch   │
-│ Phase 11    │ Production Observability & Distributed Tracing    │ P1 Launch   │
+│ Phase 10    │ End-to-End Backpressure & Capacity Admission      │ COMPLETED   │
+│ Phase 11    │ Production Observability & Distributed Tracing    │ COMPLETED   │
 │ Phase 12    │ Real Network Impairment, Fuzzing & Multi-Server   │ P1 Launch   │
 │ Phase 13    │ Platform Maturity, Kernel Tuning & Formal Verif.  │ P2 Maturity │
 └─────────────┴───────────────────────────────────────────────────┴─────────────┘
@@ -158,22 +158,22 @@ Following strict distributed systems engineering discipline, deliverables are ca
 
 ---
 
-### Phase 11: Production Observability, High-Cardinality Telemetry & Tracing (P1)
+### Phase 11: Production Observability, High-Cardinality Telemetry & Tracing (P1 - Completed & Verified)
 
 *Objective: Equip the engine with production-grade telemetry, microsecond-accurate phase timing, bounded-cardinality Prometheus metrics, and correlated distributed tracing.*
 
-- **Milestone 11.1: Production Service Level Objectives (SLOs) & Prometheus Metrics**
-  - Server-level metrics: tick duration percentiles (p50, p95, p99, p99.9), ingress/egress packets per second, bytes per client, queue depths, retransmission rates, and allocator memory.
-  - Zone-level metrics: active entity count, observer count, hotspot density index, and border migration rate.
-  - Bounded label cardinality: strictly avoid per-player metric labels to protect Prometheus from memory exhaustion; aggregate per-player metrics into bounded histogram buckets.
-- **Milestone 11.2: Correlated Distributed Tracing**
-  - End-to-end trace context propagation across the request lifecycle:
+- [x] **Milestone 11.1: Production Service Level Objectives (SLOs) & Prometheus Metrics**
+  - [x] Server-level metrics: tick duration percentiles (p50, p95, p99, p99.9), ingress/egress packets per second, bytes per client, queue depths, retransmission rates, and allocator memory.
+  - [x] Zone-level metrics: active entity count, observer count, hotspot density index, and border migration rate.
+  - [x] Bounded label cardinality: strictly avoid per-player metric labels to protect Prometheus from memory exhaustion; aggregate per-player metrics into bounded histogram buckets.
+- [x] **Milestone 11.2: Correlated Distributed Tracing**
+  - [x] End-to-end trace context propagation across the request lifecycle:
     $$\text{Client Input} \longrightarrow \text{Gateway} \longrightarrow \text{Zone Server} \longrightarrow \text{Simulation Tick} \longrightarrow \text{AoI Query} \longrightarrow \text{Replication Egress}$$
-  - Micro-trace correlation tuple: `[session_id, tick_id, entity_id, zone_id, authority_epoch]`.
-  - Rapid root-cause debugging for player rubber-banding, input drops, or migration stalls.
-- **Milestone 11.3: SRE Operational Runbooks & Automated Alerting Rules**
-  - Detailed operational runbooks for cluster alerts: tick overruns, network partition alarms, journal write delays, and backpressure drops.
-  - Agones integration health checks: automated pod draining and replacement when health thresholds degrade.
+  - [x] Micro-trace correlation tuple: `[session_id, tick_id, entity_id, zone_id, authority_epoch, trace_id, span_id]`.
+  - [x] Rapid root-cause debugging for player rubber-banding, input drops, or migration stalls.
+- [x] **Milestone 11.3: SRE Operational Runbooks & Automated Alerting Rules**
+  - [x] Detailed operational runbooks for cluster alerts: tick overruns, network partition alarms, journal write delays, and backpressure drops.
+  - [x] Agones integration health checks: automated pod draining and replacement when health thresholds degrade.
 
 ---
 
@@ -269,6 +269,7 @@ To achieve full production sign-off, `eidolon` must satisfy all gates in this sc
 | **Persistence (WAL)** | Completed | Crash consistency & dupe prevention | 0 lost transactions / 0 duplicated items |
 | **State Reconstruction**| Completed | Disposable node recovery | 100% state restored after SIGKILL |
 | **End-to-End Flow** | Completed | Overload backpressure | 0 unbounded queues; graceful shedding |
+| **Observability & Tracing** | Completed | Prometheus & distributed tracing | 100% correlation without per-player labels |
 | **Distributed Chaos** | P1 | Multi-server 100k CCU harness | 100% entity accounting across zone seams |
 | **Network Impairment** | P1 | Compound 5% loss + 150ms jitter | 0 desyncs; deterministic dead reckoning |
 | **Soak Stability** | P1 | 7-day continuous execution | 0 RSS memory growth; 0 tick latency drift |

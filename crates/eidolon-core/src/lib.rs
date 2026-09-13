@@ -11,6 +11,7 @@ pub mod fixed;
 pub mod kinematics;
 pub mod lock;
 pub mod quant;
+pub mod trace;
 
 pub use authority::{AuthorityError, AuthorityFencer, AuthorityToken, AUTHORITY_TOKEN_LEN};
 pub use fixed::{Fixed64, Vec3Fix};
@@ -24,6 +25,7 @@ pub use quant::{
     HORIZONTAL_RESOLUTION_METERS, MAX_QUANTIZED_HORIZONTAL, MAX_QUANTIZED_VERTICAL,
     VERTICAL_RESOLUTION_METERS,
 };
+pub use trace::{TraceContext, TraceRingBuffer, TraceSpan};
 
 #[cfg(test)]
 mod tests {
