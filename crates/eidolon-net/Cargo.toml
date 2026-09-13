@@ -1,0 +1,14 @@
+[package]
+name = "eidolon-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Low-latency UDP transport, bitpacking, packet protocol, and channel sequencer."
+
+[lints]
+workspace = true
+
+[dependencies]
+eidolon-core = { workspace = true }

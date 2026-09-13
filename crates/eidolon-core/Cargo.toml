@@ -1,0 +1,13 @@
+[package]
+name = "eidolon-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Core fixed-point math, coordinate quantization, and dead reckoning extrapolation algorithms."
+
+[lints]
+workspace = true
+
+[dependencies]

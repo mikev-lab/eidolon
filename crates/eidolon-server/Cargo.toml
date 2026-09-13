@@ -1,0 +1,17 @@
+[package]
+name = "eidolon-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Headless production server binary, fixed-step tick coordinator, and Agones lifecycle integration."
+
+[lints]
+workspace = true
+
+[dependencies]
+eidolon-core = { workspace = true }
+eidolon-net = { workspace = true }
+eidolon-spatial = { workspace = true }
+eidolon-world = { workspace = true }

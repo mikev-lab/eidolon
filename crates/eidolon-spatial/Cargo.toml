@@ -1,0 +1,14 @@
+[package]
+name = "eidolon-spatial"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "High-density cache-aligned spatial hash grid and tiered Area of Interest (AoI) frequency manager."
+
+[lints]
+workspace = true
+
+[dependencies]
+eidolon-core = { workspace = true }

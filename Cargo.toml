@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/eidolon-core",
+    "crates/eidolon-net",
+    "crates/eidolon-spatial",
+    "crates/eidolon-world",
+    "crates/eidolon-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "BUSL-1.1"
+authors = ["Michael Valdez (mikev-lab)"]
+repository = "https://github.com/mikev-lab/eidolon"
+rust-version = "1.80.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "deny"
+correctness = "deny"
+perf = "deny"
+
+[workspace.dependencies]
+eidolon-core = { path = "crates/eidolon-core", version = "0.1.0" }
+eidolon-net = { path = "crates/eidolon-net", version = "0.1.0" }
+eidolon-spatial = { path = "crates/eidolon-spatial", version = "0.1.0" }
+eidolon-world = { path = "crates/eidolon-world", version = "0.1.0" }

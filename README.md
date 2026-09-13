@@ -196,9 +196,9 @@ For the full legal parameters, please review the [LICENSE](./LICENSE) file.
 - [x] Architecture & Wire Protocol Specification
 - [x] BSL 1.1 Fair-Source Licensing with $1M Indie Exemption
 - [x] Engineering Governance & Production Invariants (`AGENTS.md`)
-- [ ] Workspace Root Cargo Manifest & Crate Stubs (`crates/`)
-- [ ] Automated Governance & Compliance Test Harness
-- [ ] GitHub Actions CI Workflow (`.github/workflows/ci.yml`)
+- [x] Workspace Root Cargo Manifest & Crate Stubs (`crates/`)
+- [x] Automated Governance & Compliance Test Harness (`compliance.rs`)
+- [x] GitHub Actions CI Workflow (`.github/workflows/ci.yml`)
 
 ---
 
