@@ -33,6 +33,7 @@ pub mod script_engine;
 pub mod sector_parallel;
 pub mod soa_storage;
 pub mod social;
+pub mod sqpoll_journal;
 pub mod territory;
 pub mod threat;
 pub mod transaction;
@@ -116,6 +117,9 @@ pub use social::{
     GUILD_PERM_CLAIM_TERRITORY, GUILD_PERM_DEMOTE, GUILD_PERM_EDIT_RANKS, GUILD_PERM_INVITE,
     GUILD_PERM_KICK, GUILD_PERM_MANAGE_DIPLOMACY, GUILD_PERM_PROMOTE, GUILD_PERM_VAULT_DEPOSIT,
     GUILD_PERM_VAULT_WITHDRAW, MAX_GUILD_MEMBERS,
+};
+pub use sqpoll_journal::{
+    AsyncSqpollJournal, DoubleBufferedJournalQueue, StampedWalRecord, JOURNAL_BUFFER_CAPACITY,
 };
 pub use territory::{
     TerritoryError, TerritoryManager, TerritoryPlot, TERRITORY_PERM_ACCESS_CONTAINERS,
