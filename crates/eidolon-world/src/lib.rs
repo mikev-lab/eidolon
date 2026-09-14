@@ -16,6 +16,7 @@ pub mod companion;
 pub mod durable_journal;
 pub mod equipment;
 pub mod error;
+pub mod flight_recorder;
 pub mod flocking;
 pub mod hibernation;
 pub mod instance;
@@ -64,6 +65,9 @@ pub use companion::{
 pub use durable_journal::{CommitDurability, DurableFileJournal, JOURNAL_MAGIC};
 pub use equipment::EquipmentContainer;
 pub use error::{InstanceId, WorldError, ZoneId};
+pub use flight_recorder::{
+    FlightRecorder, ReplayError, ReplaySession, MAX_INPUT_FRAMES_CAPACITY, MAX_KEYFRAMES_CAPACITY,
+};
 pub use flocking::compute_separation;
 pub use hibernation::{
     compute_adler32, hydrate_player_into_zone, CharacterRecord, HibernationHeader, PityState,

@@ -21,6 +21,7 @@ pub mod market;
 pub mod morton;
 pub mod perception;
 pub mod quant;
+pub mod replay;
 pub mod structure;
 pub mod trace;
 pub mod vehicle;
@@ -63,6 +64,10 @@ pub use quant::{
     QuantizedCellCoord, QuantizedYaw, CELL_HORIZONTAL_SIZE, CELL_VERTICAL_SIZE,
     HORIZONTAL_RESOLUTION_METERS, MAX_QUANTIZED_HORIZONTAL, MAX_QUANTIZED_VERTICAL,
     VERTICAL_RESOLUTION_METERS,
+};
+pub use replay::{
+    compute_entities_checksum, extrapolate_with_input, EntityStateSnapshot, KeyframeSnapshot,
+    PlaybackSpeed, RecordedInputFrame, ReplayDivergence, MAX_KEYFRAME_ENTITIES,
 };
 pub use structure::{
     calculate_stability, InteriorItemRecord, InteriorItemTransform, MaterialType, PieceType,
