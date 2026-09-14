@@ -10,6 +10,7 @@ use eidolon_core::quant::{
     QuantizedCellCoord, QuantizedYaw, CELL_HORIZONTAL_SIZE, CELL_VERTICAL_SIZE,
     MAX_QUANTIZED_HORIZONTAL, MAX_QUANTIZED_VERTICAL,
 };
+use eidolon_core::simd::Vec3Fix8x;
 
 #[test]
 fn test_deterministic_parity_10k_ticks() {
@@ -261,4 +262,69 @@ fn test_bitpacking_compression_efficiency() {
     assert_eq!(recovered_coord, coord);
     assert_eq!(recovered_yaw, yaw);
     assert_eq!(recovered_flags, flags);
+}
+
+#[test]
+fn test_simd_8x_mathematical_precision_and_parity() {
+    let dt = Fixed64::from_f64(0.05); // 20 Hz = 50ms per tick
+
+    // Initialize 8 distinct entities
+    let mut positions = [Vec3Fix::ZERO; 8];
+    let mut velocities = [Vec3Fix::ZERO; 8];
+    let mut scalar_positions = [Vec3Fix::ZERO; 8];
+
+    for i in 0..8 {
+        positions[i] = Vec3Fix::from_f64((i as f64) * 12.345, (i as f64) * -2.5, (i as f64) * 7.89);
+        velocities[i] = Vec3Fix::from_f64((i as f64 + 1.0) * 2.5, 0.125, (i as f64 + 1.0) * -1.75);
+        scalar_positions[i] = positions[i];
+    }
+
+    // Step 1,000 ticks in lockstep
+    for _ in 0..1_000 {
+        Vec3Fix8x::step_kinematics_chunk(&mut positions, &velocities, dt);
+        for i in 0..8 {
+            let disp = velocities[i] * dt;
+            scalar_positions[i] += disp;
+        }
+    }
+
+    // Verify bit-for-bit exact parity
+    for i in 0..8 {
+        assert_eq!(
+            positions[i].x.raw(),
+            scalar_positions[i].x.raw(),
+            "SIMD chunk X coordinate mismatch at lane {}",
+            i
+        );
+        assert_eq!(
+            positions[i].y.raw(),
+            scalar_positions[i].y.raw(),
+            "SIMD chunk Y coordinate mismatch at lane {}",
+            i
+        );
+        assert_eq!(
+            positions[i].z.raw(),
+            scalar_positions[i].z.raw(),
+            "SIMD chunk Z coordinate mismatch at lane {}",
+            i
+        );
+    }
+
+    // Test 8-lane radius bitmask filtering
+    let target = Vec3Fix::from_f64(50.0, 0.0, 50.0);
+    let radius_sq = Fixed64::from_i32(2500); // 50m radius (2,500 m^2)
+
+    let v8 = Vec3Fix8x::from_slice_8(&positions);
+    let mask = v8.filter_within_radius(target, radius_sq);
+
+    for (i, pos) in positions.iter().enumerate() {
+        let dist_sq = pos.distance_squared(target);
+        let expected_in_radius = dist_sq <= radius_sq;
+        let actual_in_radius = (mask & (1 << i)) != 0;
+        assert_eq!(
+            actual_in_radius, expected_in_radius,
+            "Lane {} radius mask parity mismatch: dist_sq = {:?}, radius_sq = {:?}",
+            i, dist_sq, radius_sq
+        );
+    }
 }

@@ -11,6 +11,7 @@ use eidolon_core::kinematics::{
     extrapolate, should_dispatch_update, DeadReckoningConfig, KinematicState, FLAG_WALKING,
 };
 use eidolon_core::quant::{QuantizedCellCoord, QuantizedYaw};
+use eidolon_core::simd::Vec3Fix8x;
 use eidolon_net::bitstream::{BitReader, BitWriter};
 use eidolon_server::queue::{NetworkPacket, SpscPacketQueue};
 use eidolon_spatial::grid::SpatialHashGrid;
@@ -54,6 +55,8 @@ fn test_engine_microbenchmarks() {
         max_clamp,
         max_dist,
         max_batch_dist,
+        max_batch8_dist,
+        max_simd_step,
         max_quant,
         max_pack,
         max_unpack,
@@ -66,13 +69,13 @@ fn test_engine_microbenchmarks() {
         max_queue,
     ) = if cfg!(debug_assertions) {
         (
-            500.0, 5_000.0, 300.0, 500.0, 1_000.0, 1_000.0, 500.0, 500.0, 10_000.0, 10_000.0,
-            250_000.0, 250_000.0, 1_000.0, 1_000.0, 1_500.0,
+            500.0, 5_000.0, 300.0, 500.0, 1_000.0, 1_500.0, 1_500.0, 1_000.0, 500.0, 500.0,
+            10_000.0, 10_000.0, 250_000.0, 250_000.0, 1_000.0, 1_000.0, 1_500.0,
         )
     } else {
         (
-            5.0, 150.0, 3.0, 8.0, 25.0, 5.0, 3.0, 3.0, 100.0, 50.0, 10_000.0, 10_000.0, 25.0, 15.0,
-            120.0,
+            5.0, 150.0, 3.0, 8.0, 25.0, 35.0, 40.0, 5.0, 3.0, 3.0, 100.0, 50.0, 10_000.0, 10_000.0,
+            25.0, 15.0, 120.0,
         )
     };
 
@@ -125,6 +128,51 @@ fn test_engine_microbenchmarks() {
     assert!(
         ns_batch_dist < max_batch_dist,
         "4-wide batch distance threshold exceeded"
+    );
+
+    let origins_8 = [
+        Vec3Fix::from_f64(1.0, 2.0, 3.0),
+        Vec3Fix::from_f64(4.0, 5.0, 6.0),
+        Vec3Fix::from_f64(7.0, 8.0, 9.0),
+        Vec3Fix::from_f64(10.0, 11.0, 12.0),
+        Vec3Fix::from_f64(13.0, 14.0, 15.0),
+        Vec3Fix::from_f64(16.0, 17.0, 18.0),
+        Vec3Fix::from_f64(19.0, 20.0, 21.0),
+        Vec3Fix::from_f64(22.0, 23.0, 24.0),
+    ];
+    let mut positions_8 = origins_8;
+    let velocities_8 = origins_8;
+    let dt_simd = Fixed64::from_f64(0.05);
+
+    let ns_batch8_dist = run_bench(
+        "Vec3Fix::batch_distance_squared_8x (8-wide SIMD)",
+        200_000,
+        || {
+            black_box(Vec3Fix::batch_distance_squared_8x(
+                black_box(origins_8),
+                black_box(p1),
+            ));
+        },
+    );
+    assert!(
+        ns_batch8_dist < max_batch8_dist,
+        "8-wide batch distance threshold exceeded"
+    );
+
+    let ns_simd_step = run_bench(
+        "Vec3Fix8x::step_kinematics_chunk (8-wide SIMD)",
+        200_000,
+        || {
+            Vec3Fix8x::step_kinematics_chunk(
+                black_box(&mut positions_8),
+                black_box(&velocities_8),
+                black_box(dt_simd),
+            );
+        },
+    );
+    assert!(
+        ns_simd_step < max_simd_step,
+        "8-wide SIMD kinematics step threshold exceeded"
     );
 
     // 3. Coordinate Quantization & 7-Byte Bitpacking
@@ -223,6 +271,22 @@ fn test_engine_microbenchmarks() {
     assert!(
         ns_grid_batched < max_grid_batched,
         "Batched spatial query threshold exceeded"
+    );
+
+    let ns_grid_batched8x = run_bench(
+        "SpatialHashGrid::query_radius_squared_batched_8x",
+        100_000,
+        || {
+            black_box(grid.query_radius_squared_batched_8x(
+                black_box(query_center),
+                black_box(radius_sq),
+                black_box(&mut out_buf),
+            ));
+        },
+    );
+    assert!(
+        ns_grid_batched8x < max_grid_batched,
+        "8-wide batched spatial query threshold exceeded"
     );
 
     // 6. Dead Reckoning Extrapolation & Divergence

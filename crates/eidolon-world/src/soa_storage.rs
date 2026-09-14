@@ -5,6 +5,7 @@
 
 use eidolon_core::fixed::{Fixed64, Vec3Fix};
 use eidolon_core::quant::QuantizedYaw;
+use eidolon_core::simd::Vec3Fix8x;
 
 use crate::equipment::EquipmentContainer;
 use crate::error::WorldError;
@@ -220,8 +221,39 @@ impl SoaEntityStorage {
 
     /// Performs contiguous linear memory physics extrapolation across all active entities.
     ///
-    /// Updates positions: `pos = pos + vel * dt` with 100% cache line utilization and zero branching.
+    /// Updates positions: `pos = pos + vel * dt` with 100% cache line utilization and zero branching,
+    /// accelerated by 8-lane SIMD registers.
     pub fn step_kinematics(&mut self, dt: Fixed64) {
+        self.step_kinematics_simd_8x(dt);
+    }
+
+    /// Performs vectorized 8-wide physics extrapolation across active entities using SIMD registers.
+    ///
+    /// Processes chunks of 8 entities using `Vec3Fix8x::step_kinematics_chunk` with AVX2/NEON parallelism,
+    /// and processes remaining tail entities (< 8) sequentially with exact mathematical parity.
+    pub fn step_kinematics_simd_8x(&mut self, dt: Fixed64) {
+        let count = self.positions.len();
+        let chunks = count / 8;
+        for c in 0..chunks {
+            let start = c * 8;
+            let end = start + 8;
+            if let (Ok(pos_chunk), Ok(vel_chunk)) = (
+                <&mut [Vec3Fix; 8]>::try_from(&mut self.positions[start..end]),
+                <&[Vec3Fix; 8]>::try_from(&self.velocities[start..end]),
+            ) {
+                Vec3Fix8x::step_kinematics_chunk(pos_chunk, vel_chunk, dt);
+            }
+        }
+
+        // Tail elements (< 8)
+        for i in (chunks * 8)..count {
+            let displacement = self.velocities[i] * dt;
+            self.positions[i] += displacement;
+        }
+    }
+
+    /// Performs scalar physics extrapolation across all active entities for baseline and parity testing.
+    pub fn step_kinematics_scalar(&mut self, dt: Fixed64) {
         let count = self.positions.len();
         for i in 0..count {
             let displacement = self.velocities[i] * dt;
@@ -407,5 +439,56 @@ mod tests {
         let (new_pos, _, _) = storage.get_transform(1).expect("get transform");
         assert!((new_pos.x.to_f64() - 0.5).abs() < 1e-6);
         assert!((new_pos.z.to_f64() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_soa_storage_simd_parity_and_tail_handling() {
+        // 27 entities: 3 full 8-lane chunks + 3 tail entities
+        let entity_count = 27;
+        let mut simd_storage = SoaEntityStorage::with_capacity(entity_count);
+        let mut scalar_storage = SoaEntityStorage::with_capacity(entity_count);
+
+        for i in 0..entity_count {
+            let id = (i + 1) as u32;
+            let pos = Vec3Fix::from_f64((i * 10) as f64, (i * 2) as f64, (i * 5) as f64);
+            let vel = Vec3Fix::from_f64((i + 1) as f64 * 1.5, 0.5, (i + 1) as f64 * -2.0);
+            let yaw = QuantizedYaw::from_degrees((i * 13) as f64);
+
+            let params = EntitySpawnParams::new(id, pos, vel, yaw);
+            simd_storage.spawn(params.clone()).expect("spawn simd");
+            scalar_storage.spawn(params).expect("spawn scalar");
+        }
+
+        let dt = Fixed64::from_f64(0.05);
+        // Step 10 ticks (0.5s total simulation)
+        for _ in 0..10 {
+            simd_storage.step_kinematics(dt);
+            scalar_storage.step_kinematics_scalar(dt);
+        }
+
+        // Verify exact bit-for-bit parity across all 27 entities
+        let (_, simd_positions, _, _, _) = simd_storage.components();
+        let (_, scalar_positions, _, _, _) = scalar_storage.components();
+
+        for i in 0..entity_count {
+            assert_eq!(
+                simd_positions[i].x.raw(),
+                scalar_positions[i].x.raw(),
+                "Entity {} X coordinate mismatch between SIMD and scalar",
+                i + 1
+            );
+            assert_eq!(
+                simd_positions[i].y.raw(),
+                scalar_positions[i].y.raw(),
+                "Entity {} Y coordinate mismatch between SIMD and scalar",
+                i + 1
+            );
+            assert_eq!(
+                simd_positions[i].z.raw(),
+                scalar_positions[i].z.raw(),
+                "Entity {} Z coordinate mismatch between SIMD and scalar",
+                i + 1
+            );
+        }
     }
 }

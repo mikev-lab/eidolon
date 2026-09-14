@@ -37,6 +37,38 @@ impl NetworkPacket {
     }
 }
 
+impl Default for NetworkPacket {
+    fn default() -> Self {
+        Self {
+            peer_addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+            payload: [0u8; MAX_PACKET_SIZE],
+            len: 0,
+        }
+    }
+}
+
+impl From<eidolon_net::DatagramSlot> for NetworkPacket {
+    #[inline]
+    fn from(slot: eidolon_net::DatagramSlot) -> Self {
+        Self {
+            peer_addr: slot.peer_addr,
+            payload: slot.payload,
+            len: slot.len,
+        }
+    }
+}
+
+impl From<NetworkPacket> for eidolon_net::DatagramSlot {
+    #[inline]
+    fn from(pkt: NetworkPacket) -> Self {
+        Self {
+            peer_addr: pkt.peer_addr,
+            payload: pkt.payload,
+            len: pkt.len,
+        }
+    }
+}
+
 #[derive(Debug)]
 #[repr(align(64))]
 struct QueueState<const CAP: usize> {
@@ -153,6 +185,40 @@ impl<const CAP: usize> SpscPacketQueue<CAP> {
         pushed
     }
 
+    /// Pops up to `dest.len()` packets directly into a destination slice in a single lock acquisition.
+    pub fn try_pop_batch(&self, dest: &mut [NetworkPacket]) -> usize {
+        let mut state = match self.state.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => match self.state.lock() {
+                Ok(guard) => guard,
+                Err(_) => return 0,
+            },
+        };
+
+        let count = dest.len().min(state.len);
+        let mut popped = 0;
+        for item in dest.iter_mut().take(count) {
+            let head = state.head;
+            if let Some(slot) = state.slots.get_mut(head) {
+                if let Some(packet) = slot.take() {
+                    *item = packet;
+                    state.head = if CAP.is_power_of_two() {
+                        (head + 1) & (CAP - 1)
+                    } else {
+                        (head + 1) % CAP
+                    };
+                    popped += 1;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        state.len = state.len.saturating_sub(popped);
+        popped
+    }
+
     /// Drains available packets into the destination slice, returning the number drained.
     pub fn drain_into(&self, dest: &mut [Option<NetworkPacket>]) -> usize {
         let mut state = match self.state.lock() {
@@ -261,5 +327,39 @@ mod tests {
             b"batch 3"
         );
         assert!(dest[3].is_none());
+    }
+
+    #[test]
+    fn test_spsc_packet_queue_try_pop_batch() {
+        let queue = SpscPacketQueue::<8>::new();
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9000);
+        let p1 = NetworkPacket::new(addr, b"pop batch 1").expect("p1");
+        let p2 = NetworkPacket::new(addr, b"pop batch 2").expect("p2");
+        let p3 = NetworkPacket::new(addr, b"pop batch 3").expect("p3");
+
+        queue.try_push_batch(&[p1, p2, p3]);
+        assert_eq!(queue.len(), 3);
+
+        let mut dest = [NetworkPacket::default(); 4];
+        let popped = queue.try_pop_batch(&mut dest);
+        assert_eq!(popped, 3);
+        assert_eq!(queue.len(), 0);
+
+        assert_eq!(&dest[0].payload[..dest[0].len], b"pop batch 1");
+        assert_eq!(&dest[1].payload[..dest[1].len], b"pop batch 2");
+        assert_eq!(&dest[2].payload[..dest[2].len], b"pop batch 3");
+    }
+
+    #[test]
+    fn test_network_packet_datagram_slot_conversions() {
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
+        let slot = eidolon_net::DatagramSlot::new(addr, b"datagram payload").unwrap();
+        let pkt: NetworkPacket = slot.into();
+        assert_eq!(pkt.peer_addr, addr);
+        assert_eq!(&pkt.payload[..pkt.len], b"datagram payload");
+
+        let slot_back: eidolon_net::DatagramSlot = pkt.into();
+        assert_eq!(slot_back.peer_addr, addr);
+        assert_eq!(slot_back.as_slice(), b"datagram payload");
     }
 }

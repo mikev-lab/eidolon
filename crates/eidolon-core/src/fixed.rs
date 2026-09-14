@@ -440,6 +440,22 @@ impl Vec3Fix {
         ]
     }
 
+    /// Computes the squared distances from 8 origin points to a common target point in parallel.
+    ///
+    /// Structured as an unrolled 8-wide batch allowing LLVM to auto-vectorize
+    /// arithmetic across AVX2 or NEON vector registers.
+    #[inline]
+    pub fn batch_distance_squared_8x(origins: [Self; 8], target: Self) -> [Fixed64; 8] {
+        let mut out = [Fixed64::ZERO; 8];
+        for i in 0..8 {
+            let dx = origins[i].x - target.x;
+            let dy = origins[i].y - target.y;
+            let dz = origins[i].z - target.z;
+            out[i] = (dx * dx) + (dy * dy) + (dz * dz);
+        }
+        out
+    }
+
     /// Returns the Euclidean distance between two points.
     #[inline]
     pub fn distance(self, other: Self) -> Fixed64 {

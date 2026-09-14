@@ -9,6 +9,7 @@
 pub mod admission;
 pub mod auth;
 pub mod backpressure;
+pub mod batch_io;
 pub mod bitstream;
 pub mod channel;
 pub mod crypto;
@@ -37,6 +38,7 @@ pub use backpressure::{
     BackpressureCoordinator, BackpressureLevel, BackpressureMetrics, BoundedEgressQueue,
     BoundedIngressQueue, PrioritizedPacket,
 };
+pub use batch_io::{DatagramBatch, DatagramSlot, PacketBufferPool, PacketRateMonitor};
 pub use bitstream::{BitReader, BitWriter};
 pub use channel::{
     IncomingReliablePacket, PendingReliablePacket, ReliableChannel, UnreliableSequencer,

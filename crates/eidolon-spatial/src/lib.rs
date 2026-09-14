@@ -384,4 +384,43 @@ mod tests {
         mor_sorted.sort_unstable();
         assert_eq!(reg_sorted, mor_sorted);
     }
+
+    #[test]
+    fn test_query_radius_8wide_simd_parity() {
+        let mut grid = SpatialHashGrid::with_capacity(120, 64);
+        let center = Vec3Fix::from_f64(50.0, 15.0, 50.0);
+
+        for id in 1..=60 {
+            let angle = (id as f64) * 0.3;
+            let dist = (id as f64) * 1.2;
+            let pos = Vec3Fix::from_f64(
+                50.0 + dist * angle.cos(),
+                15.0 + (id as f64 % 5.0),
+                50.0 + dist * angle.sin(),
+            );
+            assert!(grid.insert(id, pos).is_ok());
+        }
+
+        let radius_sq = Fixed64::from_i32(900); // 30m radius
+
+        let mut scalar_buf = [0u32; 64];
+        let mut batched4x_buf = [0u32; 64];
+        let mut batched8x_buf = [0u32; 64];
+
+        let scalar_res = grid.query_radius_squared(center, radius_sq, &mut scalar_buf);
+        let batched4x_res =
+            grid.query_radius_squared_batched(center, radius_sq, &mut batched4x_buf);
+        let batched8x_res =
+            grid.query_radius_squared_batched_8x(center, radius_sq, &mut batched8x_buf);
+
+        assert_eq!(scalar_res.written, batched4x_res.written);
+        assert_eq!(scalar_res.written, batched8x_res.written);
+        assert_eq!(scalar_res.total_matches, batched8x_res.total_matches);
+
+        let mut scalar_sorted = scalar_buf[..scalar_res.written].to_vec();
+        let mut batched8x_sorted = batched8x_buf[..batched8x_res.written].to_vec();
+        scalar_sorted.sort_unstable();
+        batched8x_sorted.sort_unstable();
+        assert_eq!(scalar_sorted, batched8x_sorted);
+    }
 }

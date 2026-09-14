@@ -22,6 +22,7 @@ pub mod morton;
 pub mod perception;
 pub mod quant;
 pub mod replay;
+pub mod simd;
 pub mod structure;
 pub mod trace;
 pub mod vehicle;
@@ -69,6 +70,7 @@ pub use replay::{
     compute_entities_checksum, extrapolate_with_input, EntityStateSnapshot, KeyframeSnapshot,
     PlaybackSpeed, RecordedInputFrame, ReplayDivergence, MAX_KEYFRAME_ENTITIES,
 };
+pub use simd::Vec3Fix8x;
 pub use structure::{
     calculate_stability, InteriorItemRecord, InteriorItemTransform, MaterialType, PieceType,
     SnapSocket, StructurePieceData, MAX_STABILITY, STANDARD_GRID_HORIZONTAL_METERS,
