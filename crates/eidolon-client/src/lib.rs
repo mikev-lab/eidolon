@@ -10,9 +10,11 @@
 pub mod client;
 pub mod config;
 pub mod event;
+pub mod web;
 pub mod world_view;
 
 pub use client::{ClientError, EidolonClient};
 pub use config::ClientConfig;
 pub use event::ClientEvent;
+pub use web::{WasmClient, WebRenderEntity, MAX_WEB_RENDER_ENTITIES};
 pub use world_view::{ClientTransform, ClientWorldView, RemoteEntity};

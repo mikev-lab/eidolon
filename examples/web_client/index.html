@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eidolon Engine: Zero-Install 60 FPS Web Client</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background-color: #0b0f19;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      width: 100vw;
+    }
+    #viewport-container {
+      position: relative;
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at center, #1e293b 0%, #0f172a 70%, #020617 100%);
+    }
+    canvas#render-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    #hud {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(51, 65, 85, 0.8);
+      border-radius: 8px;
+      padding: 12px 18px;
+      font-size: 13px;
+      line-height: 1.6;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      pointer-events: none;
+    }
+    #hud h1 {
+      font-size: 15px;
+      color: #38bdf8;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .metric-value {
+      font-weight: 600;
+      font-family: monospace;
+      color: #a7f3d0;
+    }
+    #controls-hint {
+      position: absolute;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(51, 65, 85, 0.8);
+      border-radius: 20px;
+      padding: 8px 20px;
+      font-size: 12px;
+      color: #94a3b8;
+      pointer-events: none;
+    }
+    #controls-hint kbd {
+      background: #334155;
+      color: #f1f5f9;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    #status-pill {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(51, 65, 85, 0.8);
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #10b981;
+      box-shadow: 0 0 8px #10b981;
+    }
+  </style>
+</head>
+<body>
+  <div id="viewport-container">
+    <canvas id="render-canvas"></canvas>
+    <div id="hud">
+      <h1>Eidolon Web Client</h1>
+      <div class="metric"><span>Simulation FPS:</span><span id="fps-val" class="metric-value">60.0</span></div>
+      <div class="metric"><span>Visible Entities:</span><span id="entities-val" class="metric-value">0</span></div>
+      <div class="metric"><span>Bandwidth Ingress:</span><span id="egress-val" class="metric-value">0.82 KB/s</span></div>
+      <div class="metric"><span>Extrapolation Drift:</span><span id="drift-val" class="metric-value">0.02 m</span></div>
+    </div>
+    <div id="status-pill">
+      <div class="status-dot"></div>
+      <span id="connection-status">Simulated Authoritative Feed</span>
+    </div>
+    <div id="controls-hint">
+      Use <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or <kbd>&larr;</kbd> <kbd>&uarr;</kbd> <kbd>&rarr;</kbd> <kbd>&darr;</kbd> to navigate through the seamless world
+    </div>
+  </div>
+  <script src="client.js"></script>
+</body>
+</html>

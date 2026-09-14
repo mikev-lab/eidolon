@@ -43,3 +43,17 @@ impl ClientConfig {
         })
     }
 }
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        use std::net::{IpAddr, Ipv4Addr};
+        Self {
+            server_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 7777),
+            account_id: AccountId(0),
+            session_ticket: SessionTicket([0u8; 16]),
+            timeout: Duration::from_secs(5),
+            interpolation_delay_ms: 50,
+            local_bind_addr: None,
+        }
+    }
+}

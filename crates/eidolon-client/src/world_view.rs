@@ -178,6 +178,16 @@ impl ClientWorldView {
         self.entities.len()
     }
 
+    /// Returns an iterator over all tracked remote entities without allocation.
+    pub fn iter(&self) -> impl Iterator<Item = &RemoteEntity> {
+        self.entities.values()
+    }
+
+    /// Returns a mutable iterator over all tracked remote entities without allocation.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut RemoteEntity> {
+        self.entities.values_mut()
+    }
+
     /// Clears all tracked entities from the world view (e.g. upon disconnect or zone teleport).
     pub fn clear(&mut self) {
         self.entities.clear();
