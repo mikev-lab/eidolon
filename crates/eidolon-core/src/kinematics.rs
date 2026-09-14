@@ -73,6 +73,25 @@ impl KinematicState {
         }
     }
 
+    /// Constructs a moving kinematic state with velocity and acceleration.
+    #[inline]
+    pub const fn with_acceleration(
+        position: Vec3Fix,
+        velocity: Vec3Fix,
+        acceleration: Vec3Fix,
+        yaw: QuantizedYaw,
+        flags: u8,
+    ) -> Self {
+        Self {
+            position,
+            velocity,
+            acceleration,
+            yaw,
+            angular_velocity: 0,
+            flags,
+        }
+    }
+
     /// Returns true if the entity has negligible velocity and zero acceleration.
     #[inline]
     pub fn is_stationary(self) -> bool {
@@ -92,12 +111,16 @@ pub struct DeadReckoningConfig {
     /// Default: (0.1m/s)^2 = 0.01 (m/s)^2.
     pub velocity_deadband_squared: Fixed64,
 
+    /// Maximum squared acceleration (jerk) divergence before triggering an update packet.
+    /// Default: (0.2m/s^2)^2 = 0.04 (m/s^2)^2.
+    pub acceleration_deadband_squared: Fixed64,
+
     /// Maximum angular deviation in discrete yaw steps before triggering an update.
-    /// Default: 3 discrete steps (approx. 4.2 degrees).
+    /// Default: 2 discrete steps (approx. 2.81 degrees, <= 2.5 deg calibrated threshold).
     pub heading_deadband_steps: u8,
 
     /// Maximum ticks between packets regardless of movement (heartbeat threshold).
-    /// Default: 40 ticks (2.0 seconds at 20 Hz).
+    /// Default: 60 ticks (3.0 seconds at 20 Hz).
     pub heartbeat_ticks: u32,
 }
 
@@ -108,8 +131,10 @@ impl Default for DeadReckoningConfig {
             position_deadband_squared: Fixed64::from_f64(0.0025),
             // (0.1)^2 = 0.01
             velocity_deadband_squared: Fixed64::from_f64(0.01),
-            heading_deadband_steps: 3,
-            heartbeat_ticks: 40,
+            // (0.2)^2 = 0.04
+            acceleration_deadband_squared: Fixed64::from_f64(0.04),
+            heading_deadband_steps: 2,
+            heartbeat_ticks: 60,
         }
     }
 }
@@ -192,6 +217,14 @@ pub fn should_dispatch_update(
         return true;
     }
 
+    // Acceleration divergence check (jerk deadband)
+    let accel_dist_sq = authoritative
+        .acceleration
+        .distance_squared(extrapolated.acceleration);
+    if accel_dist_sq > config.acceleration_deadband_squared {
+        return true;
+    }
+
     false
 }
 
@@ -222,5 +255,276 @@ pub fn reconcile_smooth(
         if step > 0 {
             client_state.yaw = client_state.yaw.advance_toward(authoritative.yaw, step);
         }
+    }
+}
+
+/// Continuous C2 Quintic Hermite Spline for 3D position, velocity, and acceleration continuity.
+///
+/// Blends from an initial kinematic state (P0, V0, A0) to a target kinematic state (P1, V1, A1)
+/// across a smoothing duration `tau` (default: 50ms / 0.05s). Guarantees continuity of position,
+/// velocity, and acceleration without jerk impulse on update boundaries.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct QuinticHermiteSpline3D {
+    p0: (f64, f64, f64),
+    v0: (f64, f64, f64),
+    a0: (f64, f64, f64),
+    p1: (f64, f64, f64),
+    v1: (f64, f64, f64),
+    a1: (f64, f64, f64),
+    tau: f64,
+    teleport_snapped: bool,
+}
+
+impl QuinticHermiteSpline3D {
+    /// Teleport distance threshold (10.0m) beyond which spline smoothing is bypassed to prevent smearing.
+    pub const TELEPORT_DISTANCE_THRESHOLD: f64 = 10.0;
+
+    /// Constructs a new Quintic Hermite Spline from fixed-point vectors.
+    pub fn new(
+        p0: Vec3Fix,
+        v0: Vec3Fix,
+        a0: Vec3Fix,
+        p1: Vec3Fix,
+        v1: Vec3Fix,
+        a1: Vec3Fix,
+        tau: f64,
+    ) -> Self {
+        Self::new_f64(
+            p0.to_f64(),
+            v0.to_f64(),
+            a0.to_f64(),
+            p1.to_f64(),
+            v1.to_f64(),
+            a1.to_f64(),
+            tau,
+        )
+    }
+
+    /// Constructs a new Quintic Hermine Spline from floating-point coordinate tuples.
+    pub fn new_f64(
+        p0: (f64, f64, f64),
+        v0: (f64, f64, f64),
+        a0: (f64, f64, f64),
+        p1: (f64, f64, f64),
+        v1: (f64, f64, f64),
+        a1: (f64, f64, f64),
+        tau: f64,
+    ) -> Self {
+        let dx = p1.0 - p0.0;
+        let dy = p1.1 - p0.1;
+        let dz = p1.2 - p0.2;
+        let dist_sq = dx * dx + dy * dy + dz * dz;
+        let teleport_snapped =
+            dist_sq >= Self::TELEPORT_DISTANCE_THRESHOLD * Self::TELEPORT_DISTANCE_THRESHOLD;
+        let tau_safe = if tau <= 0.0001 { 0.05 } else { tau };
+
+        Self {
+            p0,
+            v0,
+            a0,
+            p1,
+            v1,
+            a1,
+            tau: tau_safe,
+            teleport_snapped,
+        }
+    }
+
+    /// Returns true if the distance between P0 and P1 exceeded the teleport threshold.
+    #[inline]
+    pub fn is_teleport_snapped(&self) -> bool {
+        self.teleport_snapped
+    }
+
+    /// Returns the blending duration tau in seconds.
+    #[inline]
+    pub fn tau(&self) -> f64 {
+        self.tau
+    }
+
+    /// Samples continuous position (x, y, z) at elapsed time `delta_seconds`.
+    pub fn sample_position(&self, delta_seconds: f64) -> (f64, f64, f64) {
+        if self.teleport_snapped {
+            let dt = delta_seconds.max(0.0);
+            return (
+                self.p1.0 + self.v1.0 * dt + 0.5 * self.a1.0 * dt * dt,
+                self.p1.1 + self.v1.1 * dt + 0.5 * self.a1.1 * dt * dt,
+                self.p1.2 + self.v1.2 * dt + 0.5 * self.a1.2 * dt * dt,
+            );
+        }
+
+        if delta_seconds <= 0.0 {
+            return self.p0;
+        }
+
+        if delta_seconds >= self.tau {
+            let dt = delta_seconds - self.tau;
+            return (
+                self.p1.0 + self.v1.0 * dt + 0.5 * self.a1.0 * dt * dt,
+                self.p1.1 + self.v1.1 * dt + 0.5 * self.a1.1 * dt * dt,
+                self.p1.2 + self.v1.2 * dt + 0.5 * self.a1.2 * dt * dt,
+            );
+        }
+
+        let u = delta_seconds / self.tau;
+        let u2 = u * u;
+        let u3 = u2 * u;
+        let u4 = u3 * u;
+        let u5 = u4 * u;
+
+        // Quintic Hermite basis functions:
+        // h0(u) = 1 - 10u^3 + 15u^4 - 6u^5
+        // h1(u) = u - 6u^3 + 8u^4 - 3u^5
+        // h2(u) = 0.5u^2 - 1.5u^3 + 1.5u^4 - 0.5u^5
+        // h3(u) = 0.5u^3 - u^4 + 0.5u^5
+        // h4(u) = -4u^3 + 7u^4 - 3u^5
+        // h5(u) = 10u^3 - 15u^4 + 6u^5
+        let h0 = 1.0 - 10.0 * u3 + 15.0 * u4 - 6.0 * u5;
+        let h1 = u - 6.0 * u3 + 8.0 * u4 - 3.0 * u5;
+        let h2 = 0.5 * u2 - 1.5 * u3 + 1.5 * u4 - 0.5 * u5;
+        let h3 = 0.5 * u3 - u4 + 0.5 * u5;
+        let h4 = -4.0 * u3 + 7.0 * u4 - 3.0 * u5;
+        let h5 = 10.0 * u3 - 15.0 * u4 + 6.0 * u5;
+
+        let tau = self.tau;
+        let tau2 = tau * tau;
+
+        let sample_axis = |p0: f64, v0: f64, a0: f64, p1: f64, v1: f64, a1: f64| -> f64 {
+            h0 * p0
+                + h1 * (tau * v0)
+                + h2 * (tau2 * a0)
+                + h3 * (tau2 * a1)
+                + h4 * (tau * v1)
+                + h5 * p1
+        };
+
+        (
+            sample_axis(
+                self.p0.0, self.v0.0, self.a0.0, self.p1.0, self.v1.0, self.a1.0,
+            ),
+            sample_axis(
+                self.p0.1, self.v0.1, self.a0.1, self.p1.1, self.v1.1, self.a1.1,
+            ),
+            sample_axis(
+                self.p0.2, self.v0.2, self.a0.2, self.p1.2, self.v1.2, self.a1.2,
+            ),
+        )
+    }
+
+    /// Samples continuous velocity (vx, vy, vz) at elapsed time `delta_seconds`.
+    pub fn sample_velocity(&self, delta_seconds: f64) -> (f64, f64, f64) {
+        if self.teleport_snapped {
+            let dt = delta_seconds.max(0.0);
+            return (
+                self.v1.0 + self.a1.0 * dt,
+                self.v1.1 + self.a1.1 * dt,
+                self.v1.2 + self.a1.2 * dt,
+            );
+        }
+
+        if delta_seconds <= 0.0 {
+            return self.v0;
+        }
+
+        if delta_seconds >= self.tau {
+            let dt = delta_seconds - self.tau;
+            return (
+                self.v1.0 + self.a1.0 * dt,
+                self.v1.1 + self.a1.1 * dt,
+                self.v1.2 + self.a1.2 * dt,
+            );
+        }
+
+        let u = delta_seconds / self.tau;
+        let u2 = u * u;
+        let u3 = u2 * u;
+        let u4 = u3 * u;
+
+        // Derivatives of basis functions:
+        let dh0 = -30.0 * u2 + 60.0 * u3 - 30.0 * u4;
+        let dh1 = 1.0 - 18.0 * u2 + 32.0 * u3 - 15.0 * u4;
+        let dh2 = u - 4.5 * u2 + 6.0 * u3 - 2.5 * u4;
+        let dh3 = 1.5 * u2 - 4.0 * u3 + 2.5 * u4;
+        let dh4 = -12.0 * u2 + 28.0 * u3 - 15.0 * u4;
+        let dh5 = 30.0 * u2 - 60.0 * u3 + 30.0 * u4;
+
+        let tau = self.tau;
+        let tau2 = tau * tau;
+
+        let sample_axis_vel = |p0: f64, v0: f64, a0: f64, p1: f64, v1: f64, a1: f64| -> f64 {
+            (dh0 * p0
+                + dh1 * (tau * v0)
+                + dh2 * (tau2 * a0)
+                + dh3 * (tau2 * a1)
+                + dh4 * (tau * v1)
+                + dh5 * p1)
+                / tau
+        };
+
+        (
+            sample_axis_vel(
+                self.p0.0, self.v0.0, self.a0.0, self.p1.0, self.v1.0, self.a1.0,
+            ),
+            sample_axis_vel(
+                self.p0.1, self.v0.1, self.a0.1, self.p1.1, self.v1.1, self.a1.1,
+            ),
+            sample_axis_vel(
+                self.p0.2, self.v0.2, self.a0.2, self.p1.2, self.v1.2, self.a1.2,
+            ),
+        )
+    }
+
+    /// Samples continuous acceleration (ax, ay, az) at elapsed time `delta_seconds`.
+    pub fn sample_acceleration(&self, delta_seconds: f64) -> (f64, f64, f64) {
+        if self.teleport_snapped || delta_seconds >= self.tau {
+            return self.a1;
+        }
+
+        if delta_seconds <= 0.0 {
+            return self.a0;
+        }
+
+        let u = delta_seconds / self.tau;
+        let u2 = u * u;
+        let u3 = u2 * u;
+
+        // Second derivatives of basis functions:
+        let d2h0 = -60.0 * u + 180.0 * u2 - 120.0 * u3;
+        let d2h1 = -36.0 * u + 96.0 * u2 - 60.0 * u3;
+        let d2h2 = 1.0 - 9.0 * u + 18.0 * u2 - 10.0 * u3;
+        let d2h3 = 3.0 * u - 12.0 * u2 + 10.0 * u3;
+        let d2h4 = -24.0 * u + 84.0 * u2 - 60.0 * u3;
+        let d2h5 = 60.0 * u - 180.0 * u2 + 120.0 * u3;
+
+        let tau = self.tau;
+        let tau2 = tau * tau;
+
+        let sample_axis_acc = |p0: f64, v0: f64, a0: f64, p1: f64, v1: f64, a1: f64| -> f64 {
+            (d2h0 * p0
+                + d2h1 * (tau * v0)
+                + d2h2 * (tau2 * a0)
+                + d2h3 * (tau2 * a1)
+                + d2h4 * (tau * v1)
+                + d2h5 * p1)
+                / tau2
+        };
+
+        (
+            sample_axis_acc(
+                self.p0.0, self.v0.0, self.a0.0, self.p1.0, self.v1.0, self.a1.0,
+            ),
+            sample_axis_acc(
+                self.p0.1, self.v0.1, self.a0.1, self.p1.1, self.v1.1, self.a1.1,
+            ),
+            sample_axis_acc(
+                self.p0.2, self.v0.2, self.a0.2, self.p1.2, self.v1.2, self.a1.2,
+            ),
+        )
+    }
+
+    /// Samples continuous position converted to deterministic fixed-point Vec3Fix.
+    pub fn sample_position_fixed(&self, delta_seconds: f64) -> Vec3Fix {
+        let (x, y, z) = self.sample_position(delta_seconds);
+        Vec3Fix::from_f64(x, y, z)
     }
 }

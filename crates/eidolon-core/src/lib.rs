@@ -50,7 +50,8 @@ pub use item_graph::{
 };
 pub use kinematics::{
     extrapolate, reconcile_smooth, should_dispatch_update, DeadReckoningConfig, KinematicState,
-    FLAG_FALLING, FLAG_IDLE, FLAG_IMMOBILIZED, FLAG_JUMPING, FLAG_SPRINTING, FLAG_WALKING,
+    QuinticHermiteSpline3D, FLAG_FALLING, FLAG_IDLE, FLAG_IMMOBILIZED, FLAG_JUMPING,
+    FLAG_SPRINTING, FLAG_WALKING,
 };
 pub use lock::{GenerationLockRegistry, LockEntry, LockError, LockToken, MAX_TRACKED_LOCKS};
 pub use market::{

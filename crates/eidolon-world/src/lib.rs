@@ -111,7 +111,10 @@ pub use sector_parallel::{
     SectorBucket, SectorCoord, SectorJob, SectorMigration, SectorParallelCoordinator,
     SectorParallelError,
 };
-pub use soa_storage::{ColdEntityMetadata, SoaEntityStorage, SPARSE_SENTINEL};
+pub use soa_storage::{
+    ColdEntityMetadata, EntityComponent2ndOrderSlices, EntityComponentSlices, EntitySpawnParams,
+    SoaEntityStorage, SPARSE_SENTINEL,
+};
 pub use social::{
     Alliance, DiplomaticStatus, Guild, GuildMember, SocialError, SocialManager,
     GUILD_PERM_CLAIM_TERRITORY, GUILD_PERM_DEMOTE, GUILD_PERM_EDIT_RANKS, GUILD_PERM_INVITE,

@@ -49,6 +49,8 @@ pub struct EntitySpawnParams {
     pub position: Vec3Fix,
     /// Initial velocity.
     pub velocity: Vec3Fix,
+    /// Initial acceleration.
+    pub acceleration: Vec3Fix,
     /// Facing heading.
     pub heading: QuantizedYaw,
     /// Movement flags.
@@ -62,12 +64,34 @@ pub struct EntitySpawnParams {
 }
 
 impl EntitySpawnParams {
-    /// Creates a new spawn parameter bundle with default health and metadata.
+    /// Creates a new spawn parameter bundle with default health, metadata, and zero acceleration.
     pub fn new(id: u32, position: Vec3Fix, velocity: Vec3Fix, heading: QuantizedYaw) -> Self {
         Self {
             id,
             position,
             velocity,
+            acceleration: Vec3Fix::ZERO,
+            heading,
+            flags: 0,
+            health: 100,
+            max_health: 100,
+            cold: ColdEntityMetadata::default(),
+        }
+    }
+
+    /// Creates a new spawn parameter bundle with explicit acceleration.
+    pub fn with_acceleration(
+        id: u32,
+        position: Vec3Fix,
+        velocity: Vec3Fix,
+        acceleration: Vec3Fix,
+        heading: QuantizedYaw,
+    ) -> Self {
+        Self {
+            id,
+            position,
+            velocity,
+            acceleration,
             heading,
             flags: 0,
             health: 100,
@@ -80,6 +104,16 @@ impl EntitySpawnParams {
 /// Slice view over core entity kinematic components.
 pub type EntityComponentSlices<'a> = (
     &'a [u32],
+    &'a [Vec3Fix],
+    &'a [Vec3Fix],
+    &'a [QuantizedYaw],
+    &'a [u8],
+);
+
+/// Slice view over 2nd-order entity kinematic components (id, pos, vel, accel, yaw, flags).
+pub type EntityComponent2ndOrderSlices<'a> = (
+    &'a [u32],
+    &'a [Vec3Fix],
     &'a [Vec3Fix],
     &'a [Vec3Fix],
     &'a [QuantizedYaw],
@@ -99,6 +133,8 @@ pub struct SoaEntityStorage {
     positions: Vec<Vec3Fix>,
     /// Contiguous velocity vectors in meters per second.
     velocities: Vec<Vec3Fix>,
+    /// Contiguous acceleration vectors in meters per second squared.
+    accelerations: Vec<Vec3Fix>,
     /// Contiguous facing headings.
     headings: Vec<QuantizedYaw>,
     /// Movement state and status flags.
@@ -124,6 +160,7 @@ impl SoaEntityStorage {
             ids: Vec::with_capacity(capacity),
             positions: Vec::with_capacity(capacity),
             velocities: Vec::with_capacity(capacity),
+            accelerations: Vec::with_capacity(capacity),
             headings: Vec::with_capacity(capacity),
             flags: Vec::with_capacity(capacity),
             health: Vec::with_capacity(capacity),
@@ -169,6 +206,7 @@ impl SoaEntityStorage {
         self.ids.push(params.id);
         self.positions.push(params.position);
         self.velocities.push(params.velocity);
+        self.accelerations.push(params.acceleration);
         self.headings.push(params.heading);
         self.flags.push(params.flags);
         self.health.push(params.health);
@@ -201,6 +239,7 @@ impl SoaEntityStorage {
         let removed_id = self.ids.swap_remove(dense_idx);
         let _pos = self.positions.swap_remove(dense_idx);
         let _vel = self.velocities.swap_remove(dense_idx);
+        let _acc = self.accelerations.swap_remove(dense_idx);
         let _yaw = self.headings.swap_remove(dense_idx);
         let _flg = self.flags.swap_remove(dense_idx);
         let _hp = self.health.swap_remove(dense_idx);
@@ -300,6 +339,19 @@ impl SoaEntityStorage {
         }
     }
 
+    /// Performs 2nd-order quadratic physics extrapolation:
+    /// pos = pos + vel * dt + 0.5 * accel * dt^2
+    /// vel = vel + accel * dt
+    pub fn step_kinematics_2nd_order(&mut self, dt: Fixed64) {
+        let half_dt_sq = dt * dt * Fixed64::HALF;
+        let count = self.positions.len();
+        for i in 0..count {
+            let displacement = (self.velocities[i] * dt) + (self.accelerations[i] * half_dt_sq);
+            self.positions[i] += displacement;
+            self.velocities[i] += self.accelerations[i] * dt;
+        }
+    }
+
     /// Retrieves an entity's transform components by entity ID in O(1) time.
     #[inline]
     pub fn get_transform(&self, id: u32) -> Option<(Vec3Fix, Vec3Fix, QuantizedYaw)> {
@@ -311,6 +363,28 @@ impl SoaEntityStorage {
                 return Some((
                     self.positions[idx],
                     self.velocities[idx],
+                    self.headings[idx],
+                ));
+            }
+        }
+        None
+    }
+
+    /// Retrieves an entity's 2nd-order transform components (pos, vel, accel, yaw) by entity ID.
+    #[inline]
+    pub fn get_transform_2nd_order(
+        &self,
+        id: u32,
+    ) -> Option<(Vec3Fix, Vec3Fix, Vec3Fix, QuantizedYaw)> {
+        let id_idx = id as usize;
+        if id_idx < self.sparse_to_dense.len() {
+            let dense_idx = self.sparse_to_dense[id_idx];
+            if dense_idx != SPARSE_SENTINEL {
+                let idx = dense_idx as usize;
+                return Some((
+                    self.positions[idx],
+                    self.velocities[idx],
+                    self.accelerations[idx],
                     self.headings[idx],
                 ));
             }
@@ -333,6 +407,30 @@ impl SoaEntityStorage {
                 let idx = dense_idx as usize;
                 self.positions[idx] = pos;
                 self.velocities[idx] = vel;
+                self.headings[idx] = heading;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Updates an entity's 2nd-order transform (pos, vel, accel, heading) in O(1) time.
+    pub fn set_transform_2nd_order(
+        &mut self,
+        id: u32,
+        pos: Vec3Fix,
+        vel: Vec3Fix,
+        accel: Vec3Fix,
+        heading: QuantizedYaw,
+    ) -> bool {
+        let id_idx = id as usize;
+        if id_idx < self.sparse_to_dense.len() {
+            let dense_idx = self.sparse_to_dense[id_idx];
+            if dense_idx != SPARSE_SENTINEL {
+                let idx = dense_idx as usize;
+                self.positions[idx] = pos;
+                self.velocities[idx] = vel;
+                self.accelerations[idx] = accel;
                 self.headings[idx] = heading;
                 return true;
             }
@@ -377,6 +475,18 @@ impl SoaEntityStorage {
         &mut self.velocities
     }
 
+    /// Provides immutable slice view over the entity accelerations.
+    #[inline]
+    pub fn accelerations(&self) -> &[Vec3Fix] {
+        &self.accelerations
+    }
+
+    /// Provides mutable slice view over the entity accelerations.
+    #[inline]
+    pub fn accelerations_mut(&mut self) -> &mut [Vec3Fix] {
+        &mut self.accelerations
+    }
+
     /// Provides immutable slice views over the dense parallel arrays for bulk processing.
     #[inline]
     pub fn components(&self) -> EntityComponentSlices<'_> {
@@ -384,6 +494,19 @@ impl SoaEntityStorage {
             &self.ids,
             &self.positions,
             &self.velocities,
+            &self.headings,
+            &self.flags,
+        )
+    }
+
+    /// Provides immutable slice views over the 2nd-order kinematic components.
+    #[inline]
+    pub fn components_2nd_order(&self) -> EntityComponent2ndOrderSlices<'_> {
+        (
+            &self.ids,
+            &self.positions,
+            &self.velocities,
+            &self.accelerations,
             &self.headings,
             &self.flags,
         )
@@ -600,5 +723,48 @@ mod tests {
                 "Entity {i} position must match between scalar and SIMD 16x"
             );
         }
+    }
+
+    #[test]
+    fn test_soa_storage_2nd_order_kinematics() {
+        let mut storage = SoaEntityStorage::with_capacity(4);
+
+        let pos = Vec3Fix::from_f64(0.0, 0.0, 0.0);
+        let vel = Vec3Fix::from_f64(10.0, 0.0, 0.0);
+        let accel = Vec3Fix::from_f64(2.0, 0.0, 0.0); // 2 m/s^2 along X
+        let heading = QuantizedYaw::from_degrees(90.0);
+
+        let params = EntitySpawnParams::with_acceleration(1, pos, vel, accel, heading);
+        storage.spawn(params).expect("spawn with accel");
+
+        // Verify initial state retrieval
+        let (p0, v0, a0, y0) = storage
+            .get_transform_2nd_order(1)
+            .expect("get 2nd order transform");
+        assert_eq!(p0, pos);
+        assert_eq!(v0, vel);
+        assert_eq!(a0, accel);
+        assert_eq!(y0, heading);
+
+        // Step 10 ticks (0.5s total at 20 Hz, dt = 0.05s)
+        let dt = Fixed64::from_f64(0.05);
+        for _ in 0..10 {
+            storage.step_kinematics_2nd_order(dt);
+        }
+
+        // Analytical kinematics after t = 0.5s:
+        // x(t) = x0 + v0 * t + 0.5 * a * t^2 = 0 + 10 * 0.5 + 0.5 * 2 * (0.25) = 5.0 + 0.25 = 5.25m
+        // vx(t) = v0 + a * t = 10 + 2 * 0.5 = 11.0 m/s
+        let (p1, v1, a1, _) = storage.get_transform_2nd_order(1).expect("get final");
+        assert!((p1.x.to_f64() - 5.25).abs() < 1e-4);
+        assert!((v1.x.to_f64() - 11.0).abs() < 1e-4);
+        assert_eq!(a1, accel);
+
+        // Slice verification
+        let (ids, positions, velocities, accelerations, _, _) = storage.components_2nd_order();
+        assert_eq!(ids, &[1]);
+        assert_eq!(positions[0], p1);
+        assert_eq!(velocities[0], v1);
+        assert_eq!(accelerations[0], a1);
     }
 }
