@@ -21,6 +21,7 @@ pub mod pcap;
 pub mod protocol;
 pub mod queue;
 pub mod quota;
+pub mod schema;
 pub mod version;
 pub mod wire_accounting;
 
@@ -57,6 +58,10 @@ pub use queue::PacketRingBuffer;
 pub use quota::{
     ConnectionMemoryAccountant, SocketRatePolicer, DEFAULT_MAX_BPS, DEFAULT_MAX_PPS,
     MAX_CONNECTION_MEMORY,
+};
+pub use schema::{
+    DeltaXorCompressor, FieldDescriptor, FieldType, FieldValue, NegotiatedSession, SchemaEngine,
+    SchemaError, SchemaNegotiator, WireSchema, MAX_SCHEMA_FIELDS,
 };
 pub use version::{
     ProtocolFeatures, ProtocolNegotiator, MAX_SUPPORTED_VERSION, MIN_SUPPORTED_VERSION,
