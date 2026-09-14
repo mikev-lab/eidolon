@@ -20,6 +20,7 @@ pub mod flocking;
 pub mod hibernation;
 pub mod instance;
 pub mod interior;
+pub mod item_transaction;
 pub mod npc_ecosystem;
 pub mod partition;
 pub mod party;
@@ -68,6 +69,10 @@ pub use instance::{
     DungeonInstance, DungeonPool, InstanceLifecycle, MAX_PARTY_MEMBERS, ROOM_CLEANUP_TIMEOUT_TICKS,
 };
 pub use interior::{InteriorCell, InteriorCellManager, MAX_INTERIOR_ITEMS_PER_BUILDING};
+pub use item_transaction::{
+    ItemTransactionCoordinator, ItemTransactionError, ItemTransferIntent, ItemTransferResult,
+    MAX_TX_DEDUP_CAPACITY,
+};
 pub use npc_ecosystem::{NpcEcosystemManager, NpcEntity, NpcLodTier, NpcState};
 pub use partition::{
     BoundaryLease, EntityPartitionState, ZonePartitionDetector, ZonePartitionManager,

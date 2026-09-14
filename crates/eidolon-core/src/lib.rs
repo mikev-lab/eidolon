@@ -13,6 +13,7 @@ pub mod geom;
 pub mod global_coord;
 pub mod identity;
 pub mod item;
+pub mod item_graph;
 pub mod kinematics;
 pub mod lock;
 pub mod morton;
@@ -32,6 +33,10 @@ pub use identity::{
 };
 pub use item::{
     get_item_definition, EquipmentSlot, ItemDefinition, StatBlock, NUM_EQUIPMENT_SLOTS,
+};
+pub use item_graph::{
+    Container, ContainerError, ContainerSlot, ContainerType, ItemInstance, ITEM_FLAG_CONTAINER,
+    ITEM_FLAG_DAMAGED, ITEM_FLAG_SOULBOUND, ITEM_FLAG_TRANSACTION_LOCKED,
 };
 pub use kinematics::{
     extrapolate, reconcile_smooth, should_dispatch_update, DeadReckoningConfig, KinematicState,
