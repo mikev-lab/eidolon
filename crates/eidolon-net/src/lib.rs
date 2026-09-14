@@ -23,6 +23,7 @@ pub mod pcap;
 pub mod protocol;
 pub mod queue;
 pub mod quota;
+pub mod rans;
 pub mod schema;
 pub mod version;
 pub mod wire_accounting;
@@ -67,6 +68,10 @@ pub use queue::PacketRingBuffer;
 pub use quota::{
     ConnectionMemoryAccountant, SocketRatePolicer, DEFAULT_MAX_BPS, DEFAULT_MAX_PPS,
     MAX_CONNECTION_MEMORY,
+};
+pub use rans::{
+    compress_kinematic_stream, decompress_kinematic_stream, RansDecoder, RansEncoder,
+    RansSymbolTable, RANS_LOWER_BOUND, RANS_SCALE_BITS, RANS_SCALE_SUM,
 };
 pub use schema::{
     DeltaXorCompressor, FieldDescriptor, FieldType, FieldValue, NegotiatedSession, SchemaEngine,
