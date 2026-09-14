@@ -49,10 +49,11 @@ pub use impairment::{
     DelayedPacket, FastPrng, ImpairmentConfig, ImpairmentMetrics, ImpairmentOutcome,
     NetworkImpairmentHarness,
 };
-pub use packet::{PacketHeader, PacketView};
+pub use packet::{CompactPacketHeader, HeaderKind, PacketHeader, PacketView, UnifiedPacketView};
 pub use pcap::{PcapWriter, LINKTYPE_ETHERNET, PCAP_MAGIC_NUMBER};
 pub use protocol::{
-    ChannelType, PacketType, HEADER_SIZE, MAX_PACKET_SIZE, PROTOCOL_MAGIC, PROTOCOL_VERSION,
+    ChannelType, PacketType, COMPACT_HEADER_SIZE, FLAG_COMPACT_HEADER, HEADER_SIZE,
+    MAX_PACKET_SIZE, PROTOCOL_MAGIC, PROTOCOL_VERSION,
 };
 pub use queue::PacketRingBuffer;
 pub use quota::{

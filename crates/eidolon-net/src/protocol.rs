@@ -16,6 +16,12 @@ pub const MAX_PACKET_SIZE: usize = 1200;
 /// Fixed byte length of the standard packet header.
 pub const HEADER_SIZE: usize = 12;
 
+/// Fixed byte length of the compact unreliable state packet header.
+pub const COMPACT_HEADER_SIZE: usize = 6;
+
+/// Flag in byte 3 indicating a compact 6-byte packet header.
+pub const FLAG_COMPACT_HEADER: u8 = 0x08;
+
 /// Channel delivery guarantees.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

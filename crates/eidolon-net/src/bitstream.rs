@@ -108,29 +108,57 @@ impl<'a> BitWriter<'a> {
             });
         }
 
-        // Fast path for byte-aligned single byte writes
-        if num_bits == 8 && self.bit_offset.is_multiple_of(8) {
+        // Fast path for byte-aligned writes
+        if self.bit_offset.is_multiple_of(8) {
             let byte_idx = self.bit_offset / 8;
-            if let Some(byte) = self.buffer.get_mut(byte_idx) {
-                *byte = value as u8;
-                self.bit_offset += 8;
-                return Ok(());
+            if num_bits == 8 {
+                if let Some(byte) = self.buffer.get_mut(byte_idx) {
+                    *byte = value as u8;
+                    self.bit_offset += 8;
+                    return Ok(());
+                }
+            } else if num_bits == 16 {
+                if let Some(bytes) = self.buffer.get_mut(byte_idx..byte_idx + 2) {
+                    bytes.copy_from_slice(&(value as u16).to_be_bytes());
+                    self.bit_offset += 16;
+                    return Ok(());
+                }
+            } else if num_bits == 32 {
+                if let Some(bytes) = self.buffer.get_mut(byte_idx..byte_idx + 4) {
+                    bytes.copy_from_slice(&(value as u32).to_be_bytes());
+                    self.bit_offset += 32;
+                    return Ok(());
+                }
+            } else if num_bits == 64 {
+                if let Some(bytes) = self.buffer.get_mut(byte_idx..byte_idx + 8) {
+                    bytes.copy_from_slice(&value.to_be_bytes());
+                    self.bit_offset += 64;
+                    return Ok(());
+                }
             }
         }
 
-        for i in (0..num_bits).rev() {
-            let bit = ((value >> i) & 1) != 0;
+        let mut rem_bits = num_bits;
+        let cur_val = if num_bits == 64 {
+            value
+        } else {
+            value & ((1u64 << num_bits) - 1)
+        };
+
+        while rem_bits > 0 {
             let byte_idx = self.bit_offset / 8;
             let bit_idx = self.bit_offset % 8;
+            let avail = 8 - bit_idx;
+            let take = rem_bits.min(avail);
+            let shift_src = rem_bits - take;
+            let chunk = ((cur_val >> shift_src) as u8) & (((1u16 << take) - 1) as u8);
+            let shift_dst = avail - take;
+            let mask = (((1u16 << take) - 1) as u8) << shift_dst;
             if let Some(byte) = self.buffer.get_mut(byte_idx) {
-                let mask = 1u8 << (7 - bit_idx);
-                if bit {
-                    *byte |= mask;
-                } else {
-                    *byte &= !mask;
-                }
-                self.bit_offset += 1;
+                *byte = (*byte & !mask) | (chunk << shift_dst);
             }
+            self.bit_offset += take;
+            rem_bits -= take;
         }
 
         Ok(())
@@ -139,24 +167,56 @@ impl<'a> BitWriter<'a> {
     /// Writes a single 8-bit unsigned integer.
     #[inline]
     pub fn write_u8(&mut self, val: u8) -> Result<(), BitstreamError> {
+        if self.bit_offset.is_multiple_of(8) {
+            let byte_idx = self.bit_offset / 8;
+            if let Some(byte) = self.buffer.get_mut(byte_idx) {
+                *byte = val;
+                self.bit_offset += 8;
+                return Ok(());
+            }
+        }
         self.write_bits(val as u64, 8)
     }
 
     /// Writes a 16-bit unsigned integer.
     #[inline]
     pub fn write_u16(&mut self, val: u16) -> Result<(), BitstreamError> {
+        if self.bit_offset.is_multiple_of(8) {
+            let byte_idx = self.bit_offset / 8;
+            if let Some(bytes) = self.buffer.get_mut(byte_idx..byte_idx + 2) {
+                bytes.copy_from_slice(&val.to_be_bytes());
+                self.bit_offset += 16;
+                return Ok(());
+            }
+        }
         self.write_bits(val as u64, 16)
     }
 
     /// Writes a 32-bit unsigned integer.
     #[inline]
     pub fn write_u32(&mut self, val: u32) -> Result<(), BitstreamError> {
+        if self.bit_offset.is_multiple_of(8) {
+            let byte_idx = self.bit_offset / 8;
+            if let Some(bytes) = self.buffer.get_mut(byte_idx..byte_idx + 4) {
+                bytes.copy_from_slice(&val.to_be_bytes());
+                self.bit_offset += 32;
+                return Ok(());
+            }
+        }
         self.write_bits(val as u64, 32)
     }
 
     /// Writes a 64-bit unsigned integer.
     #[inline]
     pub fn write_u64(&mut self, val: u64) -> Result<(), BitstreamError> {
+        if self.bit_offset.is_multiple_of(8) {
+            let byte_idx = self.bit_offset / 8;
+            if let Some(bytes) = self.buffer.get_mut(byte_idx..byte_idx + 8) {
+                bytes.copy_from_slice(&val.to_be_bytes());
+                self.bit_offset += 64;
+                return Ok(());
+            }
+        }
         self.write_bits(val, 64)
     }
 
@@ -288,19 +348,50 @@ impl<'a> BitReader<'a> {
             });
         }
 
-        // Fast path for byte-aligned single byte reads
-        if num_bits == 8 && self.bit_offset.is_multiple_of(8) {
+        // Fast paths for byte-aligned reads
+        if self.bit_offset.is_multiple_of(8) {
             let byte_idx = self.bit_offset / 8;
-            if let Some(&byte) = self.buffer.get(byte_idx) {
-                self.bit_offset += 8;
-                return Ok(byte as u64);
+            if num_bits == 8 {
+                if let Some(&byte) = self.buffer.get(byte_idx) {
+                    self.bit_offset += 8;
+                    return Ok(byte as u64);
+                }
+            } else if num_bits == 16 {
+                if let Some(bytes) = self.buffer.get(byte_idx..byte_idx + 2) {
+                    self.bit_offset += 16;
+                    return Ok(u16::from_be_bytes([bytes[0], bytes[1]]) as u64);
+                }
+            } else if num_bits == 32 {
+                if let Some(bytes) = self.buffer.get(byte_idx..byte_idx + 4) {
+                    self.bit_offset += 32;
+                    return Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64);
+                }
+            } else if num_bits == 64 {
+                if let Some(bytes) = self.buffer.get(byte_idx..byte_idx + 8) {
+                    self.bit_offset += 64;
+                    return Ok(u64::from_be_bytes([
+                        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
+                        bytes[7],
+                    ]));
+                }
             }
         }
 
         let mut value = 0u64;
-        for _ in 0..num_bits {
-            let bit = self.read_bit()?;
-            value = (value << 1) | (bit as u64);
+        let mut rem_bits = num_bits;
+        while rem_bits > 0 {
+            let byte_idx = self.bit_offset / 8;
+            let bit_idx = self.bit_offset % 8;
+            let avail = 8 - bit_idx;
+            let take = rem_bits.min(avail);
+            let shift = avail - take;
+            let mask = (((1u16 << take) - 1) as u8) << shift;
+            if let Some(&byte) = self.buffer.get(byte_idx) {
+                let chunk = ((byte & mask) >> shift) as u64;
+                value = (value << take) | chunk;
+            }
+            self.bit_offset += take;
+            rem_bits -= take;
         }
 
         Ok(value)
@@ -309,24 +400,54 @@ impl<'a> BitReader<'a> {
     /// Reads an 8-bit unsigned integer.
     #[inline]
     pub fn read_u8(&mut self) -> Result<u8, BitstreamError> {
+        if self.bit_offset.is_multiple_of(8) {
+            let byte_idx = self.bit_offset / 8;
+            if let Some(&byte) = self.buffer.get(byte_idx) {
+                self.bit_offset += 8;
+                return Ok(byte);
+            }
+        }
         self.read_bits(8).map(|v| v as u8)
     }
 
     /// Reads a 16-bit unsigned integer.
     #[inline]
     pub fn read_u16(&mut self) -> Result<u16, BitstreamError> {
+        if self.bit_offset.is_multiple_of(8) {
+            let byte_idx = self.bit_offset / 8;
+            if let Some(bytes) = self.buffer.get(byte_idx..byte_idx + 2) {
+                self.bit_offset += 16;
+                return Ok(u16::from_be_bytes([bytes[0], bytes[1]]));
+            }
+        }
         self.read_bits(16).map(|v| v as u16)
     }
 
     /// Reads a 32-bit unsigned integer.
     #[inline]
     pub fn read_u32(&mut self) -> Result<u32, BitstreamError> {
+        if self.bit_offset.is_multiple_of(8) {
+            let byte_idx = self.bit_offset / 8;
+            if let Some(bytes) = self.buffer.get(byte_idx..byte_idx + 4) {
+                self.bit_offset += 32;
+                return Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]));
+            }
+        }
         self.read_bits(32).map(|v| v as u32)
     }
 
     /// Reads a 64-bit unsigned integer.
     #[inline]
     pub fn read_u64(&mut self) -> Result<u64, BitstreamError> {
+        if self.bit_offset.is_multiple_of(8) {
+            let byte_idx = self.bit_offset / 8;
+            if let Some(bytes) = self.buffer.get(byte_idx..byte_idx + 8) {
+                self.bit_offset += 64;
+                return Ok(u64::from_be_bytes([
+                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                ]));
+            }
+        }
         self.read_bits(64)
     }
 

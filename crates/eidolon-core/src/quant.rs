@@ -64,20 +64,18 @@ impl QuantizedCellCoord {
         let y_clamped = local_y.clamp(Fixed64::ZERO, CELL_VERTICAL_SIZE);
         let z_clamped = local_z.clamp(Fixed64::ZERO, CELL_HORIZONTAL_SIZE);
 
-        let q_x = (x_clamped.saturating_div(CELL_HORIZONTAL_SIZE))
-            .saturating_mul(Fixed64::from_i32(MAX_QUANTIZED_HORIZONTAL as i32))
-            .to_i32()
-            .min(MAX_QUANTIZED_HORIZONTAL as i32) as u16;
+        // Fast bitshift quantization: 64m cell = 2^6, 32m cell = 2^5
+        let x_scaled = (x_clamped.raw() as u64) >> 6;
+        let q_x = ((x_scaled * (MAX_QUANTIZED_HORIZONTAL as u64)) >> 32)
+            .min(MAX_QUANTIZED_HORIZONTAL as u64) as u16;
 
-        let q_y = (y_clamped.saturating_div(CELL_VERTICAL_SIZE))
-            .saturating_mul(Fixed64::from_i32(MAX_QUANTIZED_VERTICAL as i32))
-            .to_i32()
-            .min(MAX_QUANTIZED_VERTICAL as i32) as u16;
+        let y_scaled = (y_clamped.raw() as u64) >> 5;
+        let q_y = ((y_scaled * (MAX_QUANTIZED_VERTICAL as u64)) >> 32)
+            .min(MAX_QUANTIZED_VERTICAL as u64) as u16;
 
-        let q_z = (z_clamped.saturating_div(CELL_HORIZONTAL_SIZE))
-            .saturating_mul(Fixed64::from_i32(MAX_QUANTIZED_HORIZONTAL as i32))
-            .to_i32()
-            .min(MAX_QUANTIZED_HORIZONTAL as i32) as u16;
+        let z_scaled = (z_clamped.raw() as u64) >> 6;
+        let q_z = ((z_scaled * (MAX_QUANTIZED_HORIZONTAL as u64)) >> 32)
+            .min(MAX_QUANTIZED_HORIZONTAL as u64) as u16;
 
         Self {
             x: q_x,

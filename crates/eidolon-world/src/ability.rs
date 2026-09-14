@@ -3,8 +3,6 @@
 //! Provides deterministic spell casting, interrupt mechanics on movement or damage,
 //! and geometric area-of-effect validation.
 
-use std::collections::HashMap;
-
 use eidolon_core::fixed::{Fixed64, Vec3Fix};
 
 /// Geometric target shape of an ability.
@@ -214,48 +212,89 @@ impl CastState {
     }
 }
 
-/// Registry tracking recovery cooldown timers per ability.
-#[derive(Debug, Clone, Default)]
+/// Maximum concurrent active ability cooldown timers tracked per entity.
+pub const MAX_COOLDOWNS_PER_ENTITY: usize = 16;
+
+/// Zero-allocation registry tracking recovery cooldown timers per ability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CooldownTracker {
-    /// Maps ability_id to the simulation tick when it will become ready.
-    expirations: HashMap<u32, u64>,
+    /// Fixed-capacity array of active (ability_id, ready_at_tick) pairs.
+    entries: [Option<(u32, u64)>; MAX_COOLDOWNS_PER_ENTITY],
 }
 
 impl CooldownTracker {
-    /// Constructs an empty cooldown tracker.
-    pub fn new() -> Self {
+    /// Constructs an empty cooldown tracker with zero dynamic heap allocations.
+    pub const fn new() -> Self {
         Self {
-            expirations: HashMap::new(),
+            entries: [None; MAX_COOLDOWNS_PER_ENTITY],
         }
     }
 
     /// Checks if an ability is ready to cast at `current_tick`.
     #[inline]
     pub fn is_ready(&self, ability_id: u32, current_tick: u64) -> bool {
-        if let Some(&ready_at) = self.expirations.get(&ability_id) {
-            current_tick >= ready_at
-        } else {
-            true
+        for entry in self.entries.iter().flatten() {
+            if entry.0 == ability_id {
+                return current_tick >= entry.1;
+            }
         }
+        true
     }
 
     /// Triggers a cooldown for the specified ability lasting `duration_ticks`.
     pub fn trigger(&mut self, ability_id: u32, current_tick: u64, duration_ticks: u32) {
         let ready_at = current_tick + duration_ticks as u64;
-        self.expirations.insert(ability_id, ready_at);
+
+        // 1. If ability is already in table, update ready_at
+        for entry in self.entries.iter_mut().flatten() {
+            if entry.0 == ability_id {
+                entry.1 = ready_at;
+                return;
+            }
+        }
+
+        // 2. Find empty slot
+        for slot in self.entries.iter_mut() {
+            if slot.is_none() {
+                *slot = Some((ability_id, ready_at));
+                return;
+            }
+        }
+
+        // 3. Reclaim an expired slot if full
+        for slot in self.entries.iter_mut() {
+            if let Some(entry) = slot {
+                if current_tick >= entry.1 {
+                    *slot = Some((ability_id, ready_at));
+                    return;
+                }
+            }
+        }
+
+        // 4. Overwrite oldest expiration if table completely saturated with active cooldowns
+        if let Some(first) = self.entries.get_mut(0) {
+            *first = Some((ability_id, ready_at));
+        }
     }
 
     /// Returns remaining ticks until ability is ready, or 0 if available.
     pub fn remaining_ticks(&self, ability_id: u32, current_tick: u64) -> u32 {
-        if let Some(&ready_at) = self.expirations.get(&ability_id) {
-            if ready_at > current_tick {
-                (ready_at - current_tick) as u32
-            } else {
-                0
+        for entry in self.entries.iter().flatten() {
+            if entry.0 == ability_id {
+                return if entry.1 > current_tick {
+                    (entry.1 - current_tick) as u32
+                } else {
+                    0
+                };
             }
-        } else {
-            0
         }
+        0
+    }
+}
+
+impl Default for CooldownTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -309,5 +348,14 @@ mod tests {
 
         assert!(tracker.is_ready(1, 140));
         assert_eq!(tracker.remaining_ticks(1, 140), 0);
+
+        // Saturation test: fill all 16 slots with active cooldowns
+        for id in 2..=17 {
+            tracker.trigger(id, 100, 50);
+            assert!(!tracker.is_ready(id, 100));
+        }
+        // Slot recycling
+        tracker.trigger(999, 200, 10);
+        assert!(!tracker.is_ready(999, 200));
     }
 }

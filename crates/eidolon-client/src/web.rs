@@ -3,6 +3,8 @@
 //! Provides an allocation-free, target-agnostic client engine that runs directly inside
 //! modern web browsers via WebAssembly and WebTransport / WebSocket binary datagrams.
 
+use std::time::Instant;
+
 use eidolon_core::fixed::Vec3Fix;
 use eidolon_core::quant::{QuantizedCellCoord, QuantizedYaw};
 use eidolon_net::error::NetError;
@@ -15,7 +17,7 @@ use crate::event::ClientEvent;
 use crate::world_view::ClientWorldView;
 
 /// Maximum renderable entities returned in a single batch to WebGL / Canvas.
-pub const MAX_WEB_RENDER_ENTITIES: usize = 256;
+pub const MAX_WEB_RENDER_ENTITIES: usize = 16384;
 
 /// C-compatible representation of an extrapolated entity transform for browser rendering.
 #[repr(C)]
@@ -59,11 +61,22 @@ pub struct WasmClient {
     event_head: usize,
     event_tail: usize,
     event_count: usize,
+    render_entities: Box<[WebRenderEntity; MAX_WEB_RENDER_ENTITIES]>,
+    render_entities_count: usize,
 }
 
 impl WasmClient {
     /// Creates a new WebAssembly client instance with default parameters.
     pub fn new(config: ClientConfig) -> Self {
+        let render_entities: Box<[WebRenderEntity; MAX_WEB_RENDER_ENTITIES]> =
+            match vec![WebRenderEntity::default(); MAX_WEB_RENDER_ENTITIES]
+                .into_boxed_slice()
+                .try_into()
+            {
+                Ok(boxed_arr) => boxed_arr,
+                Err(_) => Box::new([WebRenderEntity::default(); MAX_WEB_RENDER_ENTITIES]),
+            };
+
         Self {
             config,
             world_view: ClientWorldView::new(),
@@ -74,6 +87,8 @@ impl WasmClient {
             event_head: 0,
             event_tail: 0,
             event_count: 0,
+            render_entities,
+            render_entities_count: 0,
         }
     }
 
@@ -90,6 +105,43 @@ impl WasmClient {
     /// Mutable access to the underlying client world view.
     pub fn world_view_mut(&mut self) -> &mut ClientWorldView {
         &mut self.world_view
+    }
+
+    /// Returns a raw pointer to the pre-allocated render entities buffer in WASM linear memory.
+    ///
+    /// WebGL and JavaScript can read or upload this buffer directly via `WebAssembly.Memory`
+    /// with zero serialization or allocation overhead.
+    pub fn render_entities_ptr(&self) -> *const WebRenderEntity {
+        self.render_entities.as_ptr()
+    }
+
+    /// Returns the count of valid extrapolated entities in the internal render buffer.
+    pub fn render_entities_count(&self) -> usize {
+        self.render_entities_count
+    }
+
+    /// Populates the internal render buffer with extrapolated entity transforms.
+    ///
+    /// Returns the number of visible entities populated.
+    pub fn populate_render_entities_internal(&mut self, delta_seconds: f32) -> usize {
+        let mut count = 0;
+        for entity in self.world_view.iter() {
+            if count >= MAX_WEB_RENDER_ENTITIES {
+                break;
+            }
+            let transform = entity.extrapolate_transform(delta_seconds);
+            self.render_entities[count] = WebRenderEntity {
+                entity_id: entity.entity_id,
+                x: transform.x,
+                y: transform.y,
+                z: transform.z,
+                yaw_degrees: transform.yaw_deg,
+                flags: transform.flags,
+            };
+            count += 1;
+        }
+        self.render_entities_count = count;
+        count
     }
 
     /// Queues an internal client event in a ring buffer with drop-on-overflow semantics.
@@ -115,11 +167,31 @@ impl WasmClient {
         event
     }
 
+    /// Ingests a raw binary datagram with an explicit caller timestamp.
+    ///
+    /// Passing an explicit timestamp eliminates WASM-to-JS boundary crossings
+    /// during high-frequency datagram ingestion.
+    pub fn ingest_datagram_with_time(
+        &mut self,
+        packet: &[u8],
+        timestamp: Instant,
+    ) -> Result<usize, ClientError> {
+        self.ingest_datagram_inner(packet, Some(timestamp))
+    }
+
     /// Ingests a raw binary datagram received over WebTransport / WebSocket.
     ///
     /// Parses the packet header, extracts AoI transform updates, and updates
     /// the spatial world view with zero dynamic heap allocations.
     pub fn ingest_datagram(&mut self, packet: &[u8]) -> Result<usize, ClientError> {
+        self.ingest_datagram_inner(packet, None)
+    }
+
+    fn ingest_datagram_inner(
+        &mut self,
+        packet: &[u8],
+        timestamp: Option<Instant>,
+    ) -> Result<usize, ClientError> {
         if packet.len() < HEADER_SIZE {
             return Err(ClientError::Net(NetError::TruncatedPacket {
                 expected_len: HEADER_SIZE,
@@ -142,7 +214,7 @@ impl WasmClient {
 
         match header.packet_type {
             PacketType::StateUpdate => {
-                let count = self.parse_state_updates(payload);
+                let count = self.parse_state_updates(payload, timestamp);
                 Ok(count)
             }
             PacketType::ReliableMessage => {
@@ -168,10 +240,11 @@ impl WasmClient {
     }
 
     /// Parses 22-byte entity state updates from a state packet payload.
-    fn parse_state_updates(&mut self, payload: &[u8]) -> usize {
+    fn parse_state_updates(&mut self, payload: &[u8], timestamp: Option<Instant>) -> usize {
         let record_size = 22;
         let mut offset = 0;
         let mut updated_count = 0;
+        let now = timestamp.unwrap_or_else(Instant::now);
 
         while offset + record_size <= payload.len() {
             let chunk = &payload[offset..offset + record_size];
@@ -195,7 +268,7 @@ impl WasmClient {
             };
 
             let is_new = self.world_view.get_entity(entity_id).is_none();
-            self.world_view.upsert_entity(
+            self.world_view.upsert_entity_with_time(
                 entity_id,
                 0,
                 cell_x,
@@ -205,6 +278,7 @@ impl WasmClient {
                 yaw,
                 flags,
                 velocity,
+                now,
             );
 
             let global_pos =
@@ -369,5 +443,84 @@ mod tests {
         assert_eq!(vz, -2.5);
         assert_eq!(yaw, 90.0);
         assert_eq!(flags, 0x05);
+    }
+
+    #[test]
+    fn test_wasm_client_internal_render_buffer_and_ptr() {
+        let mut client = WasmClient::new(ClientConfig::default());
+
+        let ptr = client.render_entities_ptr();
+        assert!(!ptr.is_null());
+        assert_eq!(client.render_entities_count(), 0);
+
+        // Add 3 entities
+        for i in 1..=3 {
+            client.world_view_mut().upsert_entity(
+                i,
+                0,
+                0,
+                0,
+                0,
+                QuantizedCellCoord::new(0, 0, 0),
+                QuantizedYaw::from_degrees(0.0),
+                0,
+                Vec3Fix::from_f64((i * 5) as f64, 0.0, 0.0),
+            );
+        }
+
+        let count = client.populate_render_entities_internal(0.1);
+        assert_eq!(count, 3);
+        assert_eq!(client.render_entities_count(), 3);
+        let ids: Vec<u32> = (0..count)
+            .map(|i| client.render_entities[i].entity_id)
+            .collect();
+        assert!(ids.contains(&1));
+        assert!(ids.contains(&2));
+        assert!(ids.contains(&3));
+    }
+
+    #[test]
+    fn test_wasm_client_ingest_with_explicit_time() {
+        let mut client = WasmClient::new(ClientConfig::default());
+        let now = Instant::now();
+
+        // Build a mock state packet with 1 entity update
+        let header = PacketHeader::new(
+            ChannelType::UnreliableSequenced,
+            PacketType::StateUpdate,
+            1,
+            0,
+            0,
+        );
+        let mut buf = [0u8; 64];
+        let hdr_len = header.write_to(&mut buf).expect("write header");
+
+        // Payload: 22 bytes entity state update
+        let mut idx = hdr_len;
+        // Entity ID 777
+        buf[idx..idx + 4].copy_from_slice(&777u32.to_be_bytes());
+        idx += 4;
+        // Cell coords (0, 0, 0)
+        idx += 6;
+        // Quantized coords (0, 0, 0)
+        idx += 6;
+        // Yaw 0
+        buf[idx] = 0;
+        idx += 1;
+        // Flags 1
+        buf[idx] = 1;
+        idx += 1;
+        // Velocity (vx=10, vz=0)
+        buf[idx..idx + 2].copy_from_slice(&10i16.to_be_bytes());
+        idx += 2;
+        buf[idx..idx + 2].copy_from_slice(&0i16.to_be_bytes());
+        idx += 2;
+
+        let res = client.ingest_datagram_with_time(&buf[..idx], now);
+        assert_eq!(res.unwrap(), 1);
+        assert_eq!(client.world_view().count(), 1);
+
+        let entity = client.world_view().get_entity(777).expect("entity exists");
+        assert_eq!(entity.last_update, now);
     }
 }

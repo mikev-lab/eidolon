@@ -510,7 +510,26 @@ impl SpatialVoiceManager {
 
         const MAX_HITS: u8 = 8;
 
+        // Fast AABB broadphase bounding box for the entire ray segment
+        let seg_min_x = origin.x.min(target.x);
+        let seg_max_x = origin.x.max(target.x);
+        let seg_min_y = origin.y.min(target.y);
+        let seg_max_y = origin.y.max(target.y);
+        let seg_min_z = origin.z.min(target.z);
+        let seg_max_z = origin.z.max(target.z);
+
         for structure in structures {
+            // Ultra-fast coordinate rejection: check if structure AABB overlaps ray segment bounding box
+            if structure.max_bounds.x < seg_min_x
+                || structure.min_bounds.x > seg_max_x
+                || structure.max_bounds.y < seg_min_y
+                || structure.min_bounds.y > seg_max_y
+                || structure.max_bounds.z < seg_min_z
+                || structure.min_bounds.z > seg_max_z
+            {
+                continue;
+            }
+
             // Broad-phase: test outer compound AABB first
             if !Self::segment_intersects_bounds(
                 origin,

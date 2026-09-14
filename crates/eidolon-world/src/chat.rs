@@ -3,8 +3,6 @@
 //! Enforces server-authoritative routing across spatial proximity, party, whisper,
 //! and global channels with per-peer token-bucket rate policers.
 
-use std::collections::HashMap;
-
 use eidolon_core::fixed::{Fixed64, Vec3Fix};
 
 use crate::error::WorldError;
@@ -64,32 +62,39 @@ pub struct ChatMessage {
     pub timestamp_tick: u64,
 }
 
+/// Maximum tracked accounts in the flat zero-allocation chat rate limiter table.
+pub const CHAT_RATE_LIMITER_SLOTS: usize = 256;
+
 /// Token bucket entry for tracking per-account chat frequency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TokenBucket {
+pub struct TokenBucket {
     tokens: u32,
     last_replenish_tick: u64,
 }
 
-/// Per-player chat anti-spam rate limiter.
+/// Zero-allocation per-player chat anti-spam rate limiter.
 ///
-/// Grants up to `capacity` burst messages and replenishes 1 token every `replenish_interval_ticks`.
+/// Uses an open-addressed flat array with linear probing to eliminate runtime heap allocations.
 #[derive(Debug, Clone)]
 pub struct ChatRateLimiter {
     capacity: u32,
     replenish_interval_ticks: u64,
-    buckets: HashMap<u64, TokenBucket>,
+    slots: [Option<(u64, TokenBucket)>; CHAT_RATE_LIMITER_SLOTS],
 }
 
 impl ChatRateLimiter {
-    /// Constructs a new chat rate limiter.
+    /// Constructs a new zero-allocation chat rate limiter.
     ///
     /// Default: 5 burst messages, 1 token refilled per 20 ticks (1.0 second).
-    pub fn new(capacity: u32, replenish_interval_ticks: u64) -> Self {
+    pub const fn new(capacity: u32, replenish_interval_ticks: u64) -> Self {
         Self {
             capacity,
-            replenish_interval_ticks: replenish_interval_ticks.max(1),
-            buckets: HashMap::new(),
+            replenish_interval_ticks: if replenish_interval_ticks == 0 {
+                1
+            } else {
+                replenish_interval_ticks
+            },
+            slots: [None; CHAT_RATE_LIMITER_SLOTS],
         }
     }
 
@@ -101,10 +106,49 @@ impl ChatRateLimiter {
         account_id: u64,
         current_tick: u64,
     ) -> Result<(), WorldError> {
-        let bucket = self.buckets.entry(account_id).or_insert(TokenBucket {
-            tokens: self.capacity,
-            last_replenish_tick: current_tick,
-        });
+        let mask = CHAT_RATE_LIMITER_SLOTS - 1;
+        let mut idx = ((account_id.wrapping_mul(0x9E37_79B9_7F4A_7C15)) as usize) & mask;
+
+        // Linear probing up to 16 steps
+        let mut target_slot = None;
+        let mut empty_slot = None;
+        for _ in 0..16 {
+            match self.slots[idx] {
+                Some((id, _)) if id == account_id => {
+                    target_slot = Some(idx);
+                    break;
+                }
+                None if empty_slot.is_none() => {
+                    empty_slot = Some(idx);
+                }
+                _ => {}
+            }
+            idx = (idx + 1) & mask;
+        }
+
+        let slot_idx = match target_slot {
+            Some(i) => i,
+            None => {
+                let slot = empty_slot.unwrap_or(idx);
+                self.slots[slot] = Some((
+                    account_id,
+                    TokenBucket {
+                        tokens: self.capacity,
+                        last_replenish_tick: current_tick,
+                    },
+                ));
+                slot
+            }
+        };
+
+        let bucket = match &mut self.slots[slot_idx] {
+            Some((_, b)) => b,
+            None => {
+                return Err(WorldError::TransactionAborted(
+                    "Internal rate limiter error",
+                ))
+            }
+        };
 
         // Replenish tokens based on elapsed simulation ticks
         if current_tick > bucket.last_replenish_tick {

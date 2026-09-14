@@ -672,6 +672,13 @@ impl EidolonClient {
         self.world_view.get_visible_entities()
     }
 
+    /// Copies visible entity IDs into `out` slice without dynamic allocation.
+    ///
+    /// Returns the number of entity IDs written to `out`.
+    pub fn get_visible_entities_into(&self, out: &mut [u32]) -> usize {
+        self.world_view.get_visible_entities_into(out)
+    }
+
     /// Returns total count of visible entities in Area of Interest.
     pub fn visible_entity_count(&self) -> usize {
         self.world_view.count()

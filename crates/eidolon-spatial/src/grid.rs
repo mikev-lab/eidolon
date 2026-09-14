@@ -328,15 +328,31 @@ impl SpatialHashGrid {
     ) -> SpatialQueryResult {
         let center_cell = CellCoord::from_position(center);
         let mut matched_count = 0;
-        let r_fixed = radius_sq.sqrt();
-        let max_dx = (r_fixed.saturating_div(Fixed64::from_i32(CELL_HORIZONTAL_SIZE)))
-            .ceil()
-            .to_i32()
-            .max(1);
-        let max_dy = (r_fixed.saturating_div(Fixed64::from_i32(CELL_VERTICAL_SIZE)))
-            .ceil()
-            .to_i32()
-            .max(1);
+
+        // Fast pre-calculated discrete cell bounding boxes for common radius thresholds
+        let (max_dx, max_dy) = if radius_sq <= Fixed64::from_i32(4096) {
+            (
+                1,
+                if radius_sq <= Fixed64::from_i32(1024) {
+                    1
+                } else {
+                    2
+                },
+            )
+        } else if radius_sq <= Fixed64::from_i32(16384) {
+            (2, 4)
+        } else {
+            let r_fixed = radius_sq.sqrt();
+            let dx = (r_fixed.saturating_div(Fixed64::from_i32(CELL_HORIZONTAL_SIZE)))
+                .ceil()
+                .to_i32()
+                .max(1);
+            let dy = (r_fixed.saturating_div(Fixed64::from_i32(CELL_VERTICAL_SIZE)))
+                .ceil()
+                .to_i32()
+                .max(1);
+            (dx, dy)
+        };
         let max_dz = max_dx;
 
         // Cell neighborhood iteration around observer
@@ -349,6 +365,9 @@ impl SpatialHashGrid {
                     let bucket = (key as usize) & self.bucket_mask;
 
                     let mut curr = self.bucket_heads[bucket];
+                    if curr == TERMINAL_INDEX {
+                        continue;
+                    }
                     while curr != TERMINAL_INDEX {
                         let curr_idx = curr as usize;
                         if self.entity_keys[curr_idx] == key && self.active_mask[curr_idx] {
@@ -382,15 +401,31 @@ impl SpatialHashGrid {
     ) -> SpatialQueryResult {
         let center_cell = CellCoord::from_position(center);
         let mut matched_count = 0;
-        let r_fixed = radius_sq.sqrt();
-        let max_dx = (r_fixed.saturating_div(Fixed64::from_i32(CELL_HORIZONTAL_SIZE)))
-            .ceil()
-            .to_i32()
-            .max(1);
-        let max_dy = (r_fixed.saturating_div(Fixed64::from_i32(CELL_VERTICAL_SIZE)))
-            .ceil()
-            .to_i32()
-            .max(1);
+
+        // Fast pre-calculated discrete cell bounding boxes for common radius thresholds
+        let (max_dx, max_dy) = if radius_sq <= Fixed64::from_i32(4096) {
+            (
+                1,
+                if radius_sq <= Fixed64::from_i32(1024) {
+                    1
+                } else {
+                    2
+                },
+            )
+        } else if radius_sq <= Fixed64::from_i32(16384) {
+            (2, 4)
+        } else {
+            let r_fixed = radius_sq.sqrt();
+            let dx = (r_fixed.saturating_div(Fixed64::from_i32(CELL_HORIZONTAL_SIZE)))
+                .ceil()
+                .to_i32()
+                .max(1);
+            let dy = (r_fixed.saturating_div(Fixed64::from_i32(CELL_VERTICAL_SIZE)))
+                .ceil()
+                .to_i32()
+                .max(1);
+            (dx, dy)
+        };
         let max_dz = max_dx;
 
         let mut batch_candidates = [0u32; 4];
@@ -407,6 +442,9 @@ impl SpatialHashGrid {
                     let bucket = (key as usize) & self.bucket_mask;
 
                     let mut curr = self.bucket_heads[bucket];
+                    if curr == TERMINAL_INDEX {
+                        continue;
+                    }
                     while curr != TERMINAL_INDEX {
                         let curr_idx = curr as usize;
                         if self.entity_keys[curr_idx] == key && self.active_mask[curr_idx] {

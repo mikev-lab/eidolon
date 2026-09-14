@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["eidolon-server"]
+    environment:
+      - EIDOLON_BIND_PORT=8000
+      - EIDOLON_ZONE_ID=3
+      - EIDOLON_TICK_RATE=20
+    ports:
+      - "8000:8000/udp"
+    restart: unless-stopped
+
+  zone-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["eidolon-server"]
+    environment:
+      - EIDOLON_BIND_PORT=8001
+      - EIDOLON_ZONE_ID=1
+      - EIDOLON_TICK_RATE=20
+    ports:
+      - "8001:8001/udp"
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+  zone-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["eidolon-server"]
+    environment:
+      - EIDOLON_BIND_PORT=8002
+      - EIDOLON_ZONE_ID=2
+      - EIDOLON_TICK_RATE=20
+    ports:
+      - "8002:8002/udp"
+    depends_on:
+      - gateway
+    restart: unless-stopped

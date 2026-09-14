@@ -89,7 +89,131 @@ pub fn run_authoritative_loop(
     }
 }
 
+/// Runs a turnkey local 3-zone cluster on loopback UDP sockets.
+pub fn run_local_cluster(running: Arc<AtomicBool>, max_ticks: Option<u64>) {
+    use eidolon_server::multi_process::RealSocketZoneNode;
+    use std::thread;
+    use std::time::Duration;
+
+    println!("============================================================");
+    println!("  EIDOLON TURNKEY LOCAL MULTI-ZONE CLUSTER INITIALIZING     ");
+    println!("============================================================");
+
+    let mut node1 = match RealSocketZoneNode::bind(0, 1, None::<&str>) {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("Failed to bind Zone 1: {e}");
+            return;
+        }
+    };
+    let mut node2 = match RealSocketZoneNode::bind(0, 2, None::<&str>) {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("Failed to bind Zone 2: {e}");
+            return;
+        }
+    };
+    let mut node3 = match RealSocketZoneNode::bind(0, 3, None::<&str>) {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("Failed to bind Gateway: {e}");
+            return;
+        }
+    };
+
+    let addr1 = node1.local_addr();
+    let addr2 = node2.local_addr();
+    let addr3 = node3.local_addr();
+
+    node1.add_peer_route(2, addr2);
+    node1.add_peer_route(3, addr3);
+
+    node2.add_peer_route(1, addr1);
+    node2.add_peer_route(3, addr3);
+
+    node3.add_peer_route(1, addr1);
+    node3.add_peer_route(2, addr2);
+
+    println!("  Zone 1 [Whispering Plains] -> UDP {addr1}");
+    println!("  Zone 2 [Obsidian Crags]    -> UDP {addr2}");
+    println!("  Zone 3 [Nexus Gateway]     -> UDP {addr3}");
+    println!("  Topology: Full mesh (3 nodes, 6 bidirectional routes)");
+    println!("============================================================");
+
+    node1.spawn_entity(1001, b"player_1_state".to_vec());
+    node1.spawn_entity(1002, b"player_2_state".to_vec());
+    node2.spawn_entity(2001, b"npc_dragon_state".to_vec());
+
+    let running_1 = running.clone();
+    let running_2 = running.clone();
+    let running_3 = running.clone();
+
+    let h1 = thread::spawn(move || {
+        let mut ticks = 0u64;
+        while running_1.load(Ordering::Relaxed) {
+            if let Some(limit) = max_ticks {
+                if ticks >= limit {
+                    break;
+                }
+            }
+            let _ = node1.poll_network();
+            node1.check_migration_timeouts(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(10));
+            ticks += 1;
+        }
+        ticks
+    });
+
+    let h2 = thread::spawn(move || {
+        let mut ticks = 0u64;
+        while running_2.load(Ordering::Relaxed) {
+            if let Some(limit) = max_ticks {
+                if ticks >= limit {
+                    break;
+                }
+            }
+            let _ = node2.poll_network();
+            node2.check_migration_timeouts(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(10));
+            ticks += 1;
+        }
+        ticks
+    });
+
+    let h3 = thread::spawn(move || {
+        let mut ticks = 0u64;
+        while running_3.load(Ordering::Relaxed) {
+            if let Some(limit) = max_ticks {
+                if ticks >= limit {
+                    break;
+                }
+            }
+            let _ = node3.poll_network();
+            node3.check_migration_timeouts(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(10));
+            ticks += 1;
+        }
+        ticks
+    });
+
+    let t1 = h1.join().unwrap_or(0);
+    let t2 = h2.join().unwrap_or(0);
+    let t3 = h3.join().unwrap_or(0);
+
+    println!("Local multi-zone cluster shutdown cleanly. Ticks: Z1={t1}, Z2={t2}, Z3={t3}");
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "cluster" || a == "--cluster") {
+        let running = Arc::new(AtomicBool::new(true));
+        let max_ticks = std::env::var("EIDOLON_MAX_TICKS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+        run_local_cluster(running, max_ticks);
+        return;
+    }
+
     let config = ServerConfig::default();
     println!(
         "eidolon-server v{} initializing [magic: {:?}, proto: v{}]",
@@ -223,5 +347,12 @@ mod tests {
         );
 
         assert!(coordinator.metrics().total_ticks > 0);
+    }
+
+    #[test]
+    fn test_run_local_cluster_bounded_ticks() {
+        let running = Arc::new(AtomicBool::new(true));
+        // Run cluster for 3 ticks across all 3 zones
+        run_local_cluster(running, Some(3));
     }
 }

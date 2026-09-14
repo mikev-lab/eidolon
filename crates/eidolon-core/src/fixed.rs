@@ -197,18 +197,16 @@ impl Fixed64 {
             return Self::ZERO;
         }
         let val = (self.0 as u128) << Self::FRACTIONAL_BITS;
-        // Integer square root via bit-by-bit binary search
+        // Integer square root with direct bitmask seeding via leading zeros
         let mut root: u128 = 0;
-        let mut bit: u128 = 1u128 << 126;
-
-        while bit > val {
-            bit >>= 2;
-        }
+        let shift = (127 - val.leading_zeros()) & !1;
+        let mut bit: u128 = 1u128 << shift;
 
         let mut remainder = val;
         while bit != 0 {
-            if remainder >= root + bit {
-                remainder -= root + bit;
+            let sum = root + bit;
+            if remainder >= sum {
+                remainder -= sum;
                 root = (root >> 1) + bit;
             } else {
                 root >>= 1;

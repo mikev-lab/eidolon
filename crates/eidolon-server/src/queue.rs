@@ -38,6 +38,7 @@ impl NetworkPacket {
 }
 
 #[derive(Debug)]
+#[repr(align(64))]
 struct QueueState<const CAP: usize> {
     slots: Box<[Option<NetworkPacket>]>,
     head: usize,
@@ -69,10 +70,14 @@ impl<const CAP: usize> SpscPacketQueue<CAP> {
     /// Pushes a packet into the queue if capacity is available.
     ///
     /// Returns true if successfully enqueued, or false if the queue is full.
+    #[inline]
     pub fn try_push(&self, packet: NetworkPacket) -> bool {
-        let mut state = match self.state.lock() {
+        let mut state = match self.state.try_lock() {
             Ok(guard) => guard,
-            Err(_) => return false,
+            Err(_) => match self.state.lock() {
+                Ok(guard) => guard,
+                Err(_) => return false,
+            },
         };
 
         if state.len >= CAP {
@@ -82,7 +87,11 @@ impl<const CAP: usize> SpscPacketQueue<CAP> {
         let tail = state.tail;
         if let Some(slot) = state.slots.get_mut(tail) {
             *slot = Some(packet);
-            state.tail = (tail + 1) % CAP;
+            state.tail = if CAP.is_power_of_two() {
+                (tail + 1) & (CAP - 1)
+            } else {
+                (tail + 1) % CAP
+            };
             state.len += 1;
             true
         } else {
@@ -91,17 +100,57 @@ impl<const CAP: usize> SpscPacketQueue<CAP> {
     }
 
     /// Removes and returns the oldest packet from the queue, or None if empty.
+    #[inline]
     pub fn try_pop(&self) -> Option<NetworkPacket> {
-        let mut state = self.state.lock().ok()?;
+        let mut state = match self.state.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => self.state.lock().ok()?,
+        };
         if state.len == 0 {
             return None;
         }
 
         let head = state.head;
         let packet = state.slots.get_mut(head)?.take();
-        state.head = (head + 1) % CAP;
+        state.head = if CAP.is_power_of_two() {
+            (head + 1) & (CAP - 1)
+        } else {
+            (head + 1) % CAP
+        };
         state.len = state.len.saturating_sub(1);
         packet
+    }
+
+    /// Pushes multiple packets in a single lock acquisition to minimize lock contention.
+    pub fn try_push_batch(&self, packets: &[NetworkPacket]) -> usize {
+        let mut state = match self.state.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => match self.state.lock() {
+                Ok(guard) => guard,
+                Err(_) => return 0,
+            },
+        };
+
+        let mut pushed = 0;
+        for &packet in packets {
+            if state.len >= CAP {
+                break;
+            }
+            let tail = state.tail;
+            if let Some(slot) = state.slots.get_mut(tail) {
+                *slot = Some(packet);
+                state.tail = if CAP.is_power_of_two() {
+                    (tail + 1) & (CAP - 1)
+                } else {
+                    (tail + 1) % CAP
+                };
+                state.len += 1;
+                pushed += 1;
+            } else {
+                break;
+            }
+        }
+        pushed
     }
 
     /// Drains available packets into the destination slice, returning the number drained.
@@ -115,7 +164,11 @@ impl<const CAP: usize> SpscPacketQueue<CAP> {
         for slot in dest.iter_mut().take(count) {
             let head = state.head;
             *slot = state.slots.get_mut(head).and_then(|s| s.take());
-            state.head = (head + 1) % CAP;
+            state.head = if CAP.is_power_of_two() {
+                (head + 1) & (CAP - 1)
+            } else {
+                (head + 1) % CAP
+            };
         }
         state.len = state.len.saturating_sub(count);
         count
@@ -175,5 +228,38 @@ mod tests {
         assert_eq!(&popped2.payload[..popped2.len], b"packet 2");
 
         assert_eq!(queue.len(), 2);
+    }
+
+    #[test]
+    fn test_spsc_packet_queue_batch_operations() {
+        let queue = SpscPacketQueue::<8>::new();
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9000);
+        let p1 = NetworkPacket::new(addr, b"batch 1").expect("p1");
+        let p2 = NetworkPacket::new(addr, b"batch 2").expect("p2");
+        let p3 = NetworkPacket::new(addr, b"batch 3").expect("p3");
+
+        let batch = [p1, p2, p3];
+        let pushed = queue.try_push_batch(&batch);
+        assert_eq!(pushed, 3);
+        assert_eq!(queue.len(), 3);
+
+        let mut dest = [None, None, None, None];
+        let drained = queue.drain_into(&mut dest);
+        assert_eq!(drained, 3);
+        assert_eq!(queue.len(), 0);
+
+        assert_eq!(
+            &dest[0].unwrap().payload[..dest[0].unwrap().len],
+            b"batch 1"
+        );
+        assert_eq!(
+            &dest[1].unwrap().payload[..dest[1].unwrap().len],
+            b"batch 2"
+        );
+        assert_eq!(
+            &dest[2].unwrap().payload[..dest[2].unwrap().len],
+            b"batch 3"
+        );
+        assert!(dest[3].is_none());
     }
 }

@@ -30,6 +30,7 @@ pub mod predictive_migration;
 pub mod reconstruction;
 pub mod replicated_journal;
 pub mod script_engine;
+pub mod soa_storage;
 pub mod social;
 pub mod territory;
 pub mod threat;
@@ -104,6 +105,7 @@ pub use script_engine::{
     HostEnvironment, MockHostEnvironment, OpCode, QuestStatus, ScriptVm, VmError,
     DEFAULT_GAS_LIMIT, VM_STACK_CAPACITY, VM_VARS_CAPACITY,
 };
+pub use soa_storage::{ColdEntityMetadata, SoaEntityStorage, SPARSE_SENTINEL};
 pub use social::{
     Alliance, DiplomaticStatus, Guild, GuildMember, SocialError, SocialManager,
     GUILD_PERM_CLAIM_TERRITORY, GUILD_PERM_DEMOTE, GUILD_PERM_EDIT_RANKS, GUILD_PERM_INVITE,
