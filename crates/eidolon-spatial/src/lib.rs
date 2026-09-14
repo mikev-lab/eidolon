@@ -10,6 +10,7 @@ pub mod aoi;
 pub mod bvh;
 pub mod grid;
 pub mod hlod;
+pub mod quadtree;
 pub mod tier;
 
 pub use aoi::{
@@ -23,6 +24,11 @@ pub use grid::{
     CELL_VERTICAL_SIZE,
 };
 pub use hlod::{HlodGrid, MacroTileCoord, TerrainTile, MACRO_TILE_EDGE_METERS};
+pub use quadtree::{
+    Depth1Quadrant, HotspotCell, HotspotManager, QuadtreeAabb, DEPTH1_QUADRANT_SIZE,
+    HOTSPOT_MERGE_THRESHOLD, HOTSPOT_SPLIT_THRESHOLD, MICRO_QUADRANTS_PER_CELL,
+    MICRO_QUADRANT_SIZE, QUADTREE_EMPTY,
+};
 pub use tier::{
     FrequencyTier, TierModel, IMMEDIATE_DEMOTION_DIST_SQ, IMMEDIATE_PROMOTION_DIST_SQ,
     MID_DEMOTION_DIST_SQ, MID_PROMOTION_DIST_SQ, TIER5_HORIZON_DEMOTION_DIST_SQ,

@@ -138,6 +138,9 @@ pub struct SpatialHashGrid {
 
     // Hash table bucket heads
     bucket_heads: Vec<u32>,
+
+    // Dynamic micro-hotspot quadtree manager
+    hotspots: crate::quadtree::HotspotManager,
 }
 
 impl SpatialHashGrid {
@@ -166,6 +169,7 @@ impl SpatialHashGrid {
             next_in_cell: vec![TERMINAL_INDEX; max_entities],
             prev_in_cell: vec![TERMINAL_INDEX; max_entities],
             bucket_heads: vec![TERMINAL_INDEX; num_buckets],
+            hotspots: crate::quadtree::HotspotManager::new(max_entities, 64),
         }
     }
 
@@ -220,6 +224,18 @@ impl SpatialHashGrid {
         }
     }
 
+    /// Returns a reference to the micro-hotspot dynamic quadtree manager.
+    #[inline]
+    pub fn hotspots(&self) -> &crate::quadtree::HotspotManager {
+        &self.hotspots
+    }
+
+    /// Returns a mutable reference to the micro-hotspot dynamic quadtree manager.
+    #[inline]
+    pub fn hotspots_mut(&mut self) -> &mut crate::quadtree::HotspotManager {
+        &mut self.hotspots
+    }
+
     /// Inserts an entity at the specified continuous position.
     ///
     /// Executes in constant time O(1) without heap allocation.
@@ -253,6 +269,8 @@ impl SpatialHashGrid {
         self.bucket_heads[bucket_idx] = entity_id;
         self.active_count += 1;
 
+        let _ = self.hotspots.insert(entity_id, position);
+
         Ok(())
     }
 
@@ -273,6 +291,8 @@ impl SpatialHashGrid {
         self.positions[id] = new_position;
         self.morton_codes[id] = morton_encode_vec3(new_position);
         let new_cell = CellCoord::from_position(new_position);
+
+        let _ = self.hotspots.update_position(entity_id, new_position);
 
         // Fast path: entity remained within the same cell bucket
         if new_cell == self.cell_coords[id] {
@@ -301,6 +321,8 @@ impl SpatialHashGrid {
         if id >= self.max_entities || !self.active_mask[id] {
             return Err(SpatialError::EntityNotFound(entity_id));
         }
+
+        let _ = self.hotspots.remove(entity_id);
 
         let key = self.entity_keys[id];
         let bucket = (key as usize) & self.bucket_mask;
@@ -362,6 +384,22 @@ impl SpatialHashGrid {
                 for dy in -max_dy..=max_dy {
                     let neighbor_cell =
                         CellCoord::new(center_cell.x + dx, center_cell.y + dy, center_cell.z + dz);
+
+                    // Micro-hotspot acceleration path: if cell has been split into micro-quadrants,
+                    // prune non-intersecting quadrants and leaves.
+                    if self.hotspots.is_split(neighbor_cell) {
+                        if let Some(h_idx) = self.hotspots.find_hotspot(neighbor_cell) {
+                            self.hotspots.query_cell_hierarchical(
+                                h_idx,
+                                center,
+                                radius_sq,
+                                output_buffer,
+                                &mut matched_count,
+                            );
+                            continue;
+                        }
+                    }
+
                     let key = neighbor_cell.spatial_key();
                     let bucket = (key as usize) & self.bucket_mask;
 
@@ -439,6 +477,22 @@ impl SpatialHashGrid {
                 for dy in -max_dy..=max_dy {
                     let neighbor_cell =
                         CellCoord::new(center_cell.x + dx, center_cell.y + dy, center_cell.z + dz);
+
+                    // Micro-hotspot acceleration path: if cell has been split into micro-quadrants,
+                    // prune non-intersecting quadrants and leaves.
+                    if self.hotspots.is_split(neighbor_cell) {
+                        if let Some(h_idx) = self.hotspots.find_hotspot(neighbor_cell) {
+                            self.hotspots.query_cell_hierarchical(
+                                h_idx,
+                                center,
+                                radius_sq,
+                                output_buffer,
+                                &mut matched_count,
+                            );
+                            continue;
+                        }
+                    }
+
                     let key = neighbor_cell.spatial_key();
                     let bucket = (key as usize) & self.bucket_mask;
 
