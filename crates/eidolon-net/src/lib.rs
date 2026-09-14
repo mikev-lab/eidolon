@@ -17,6 +17,7 @@ pub mod error;
 pub mod fuzz;
 pub mod governor;
 pub mod impairment;
+pub mod io_uring;
 pub mod packet;
 pub mod pcap;
 pub mod protocol;
@@ -25,6 +26,7 @@ pub mod quota;
 pub mod schema;
 pub mod version;
 pub mod wire_accounting;
+pub mod xdp;
 
 // Re-export primary types for ergonomic crate consumption.
 pub use admission::{AdmissionConfig, AdmissionController, AdmissionMetrics, PriorityClass};
@@ -51,6 +53,10 @@ pub use impairment::{
     DelayedPacket, FastPrng, ImpairmentConfig, ImpairmentMetrics, ImpairmentOutcome,
     NetworkImpairmentHarness,
 };
+pub use io_uring::{
+    IoUringCqEntry, IoUringDriver, IoUringError, IoUringParams, IoUringRingBuffer, IoUringSqEntry,
+    IORING_OP_RECVMSG, IORING_OP_SENDMSG, IORING_SETUP_SQPOLL, PACKET_BUFFER_SIZE,
+};
 pub use packet::{CompactPacketHeader, HeaderKind, PacketHeader, PacketView, UnifiedPacketView};
 pub use pcap::{PcapWriter, LINKTYPE_ETHERNET, PCAP_MAGIC_NUMBER};
 pub use protocol::{
@@ -70,3 +76,7 @@ pub use version::{
     ProtocolFeatures, ProtocolNegotiator, MAX_SUPPORTED_VERSION, MIN_SUPPORTED_VERSION,
 };
 pub use wire_accounting::{BandwidthSummary, PhysicalFrameBreakdown, SpatialBandwidthProfile};
+pub use xdp::{
+    XdpAction, XdpDropReason, XdpPacketShield, XdpStats, CURRENT_PROTOCOL_VERSION,
+    EIDOLON_MAGIC_BYTES, MIN_DATAGRAM_HEADER_LEN, TRANSPORT_HEADER_OFFSET,
+};
