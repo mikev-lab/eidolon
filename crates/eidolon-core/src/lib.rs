@@ -17,6 +17,7 @@ pub mod item;
 pub mod item_graph;
 pub mod kinematics;
 pub mod lock;
+pub mod market;
 pub mod morton;
 pub mod perception;
 pub mod quant;
@@ -48,6 +49,10 @@ pub use kinematics::{
     FLAG_FALLING, FLAG_IDLE, FLAG_IMMOBILIZED, FLAG_JUMPING, FLAG_SPRINTING, FLAG_WALKING,
 };
 pub use lock::{GenerationLockRegistry, LockEntry, LockError, LockToken, MAX_TRACKED_LOCKS};
+pub use market::{
+    MarketError, MarketOrder, OrderBook, OrderStatus, OrderType, TradeExecution,
+    MAX_ORDERS_PER_SIDE,
+};
 pub use morton::{
     compact_bits_21, morton_decode_i32, morton_decode_u32, morton_decode_vec3, morton_encode_i32,
     morton_encode_u32, morton_encode_vec3, spread_bits_21, MORTON_COORDINATE_BIAS,

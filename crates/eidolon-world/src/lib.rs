@@ -21,6 +21,7 @@ pub mod hibernation;
 pub mod instance;
 pub mod interior;
 pub mod item_transaction;
+pub mod market_coordinator;
 pub mod npc_ecosystem;
 pub mod partition;
 pub mod party;
@@ -75,6 +76,9 @@ pub use interior::{InteriorCell, InteriorCellManager, MAX_INTERIOR_ITEMS_PER_BUI
 pub use item_transaction::{
     ItemTransactionCoordinator, ItemTransactionError, ItemTransferIntent, ItemTransferResult,
     MAX_TX_DEDUP_CAPACITY,
+};
+pub use market_coordinator::{
+    EscrowError, EscrowHolding, MarketEscrowCoordinator, MarketStation, MAX_ESCROW_ORDERS,
 };
 pub use npc_ecosystem::{NpcEcosystemManager, NpcEntity, NpcLodTier, NpcState};
 pub use partition::{
