@@ -27,6 +27,8 @@ pub mod party;
 pub mod predictive_migration;
 pub mod reconstruction;
 pub mod replicated_journal;
+pub mod social;
+pub mod territory;
 pub mod threat;
 pub mod transaction;
 pub mod wal;
@@ -88,6 +90,17 @@ pub use reconstruction::{
     ZoneCheckpoint,
 };
 pub use replicated_journal::{ReplicatedJournalSink, ReplicationMode};
+pub use social::{
+    Alliance, DiplomaticStatus, Guild, GuildMember, SocialError, SocialManager,
+    GUILD_PERM_CLAIM_TERRITORY, GUILD_PERM_DEMOTE, GUILD_PERM_EDIT_RANKS, GUILD_PERM_INVITE,
+    GUILD_PERM_KICK, GUILD_PERM_MANAGE_DIPLOMACY, GUILD_PERM_PROMOTE, GUILD_PERM_VAULT_DEPOSIT,
+    GUILD_PERM_VAULT_WITHDRAW, MAX_GUILD_MEMBERS,
+};
+pub use territory::{
+    TerritoryError, TerritoryManager, TerritoryPlot, TERRITORY_PERM_ACCESS_CONTAINERS,
+    TERRITORY_PERM_BUILD, TERRITORY_PERM_ENTER, TERRITORY_PERM_HARVEST, TERRITORY_PERM_PVP_GUARD,
+    TERRITORY_PERM_USE_PORTALS,
+};
 pub use threat::{ThreatEntry, ThreatTable};
 pub use transaction::{
     AccountState, InventoryItem, TransactionManager, TransactionOp, TransactionStatus,
