@@ -340,6 +340,43 @@ impl SoaEntityStorage {
         false
     }
 
+    /// Returns the dense array index for an entity ID if present in the storage.
+    #[inline]
+    pub fn lookup_index(&self, id: u32) -> Option<usize> {
+        let id_idx = id as usize;
+        if id_idx < self.sparse_to_dense.len() {
+            let dense_idx = self.sparse_to_dense[id_idx];
+            if dense_idx != SPARSE_SENTINEL {
+                return Some(dense_idx as usize);
+            }
+        }
+        None
+    }
+
+    /// Provides immutable slice view over the entity positions.
+    #[inline]
+    pub fn positions(&self) -> &[Vec3Fix] {
+        &self.positions
+    }
+
+    /// Provides mutable slice view over the entity positions.
+    #[inline]
+    pub fn positions_mut(&mut self) -> &mut [Vec3Fix] {
+        &mut self.positions
+    }
+
+    /// Provides immutable slice view over the entity velocities.
+    #[inline]
+    pub fn velocities(&self) -> &[Vec3Fix] {
+        &self.velocities
+    }
+
+    /// Provides mutable slice view over the entity velocities.
+    #[inline]
+    pub fn velocities_mut(&mut self) -> &mut [Vec3Fix] {
+        &mut self.velocities
+    }
+
     /// Provides immutable slice views over the dense parallel arrays for bulk processing.
     #[inline]
     pub fn components(&self) -> EntityComponentSlices<'_> {

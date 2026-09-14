@@ -21,6 +21,7 @@ pub mod queue;
 pub mod rolling;
 pub mod soak;
 pub mod tick;
+pub mod work_stealing;
 
 // Re-export primary types for ergonomic engine and integration test consumption.
 pub use agones::{AgonesClient, AgonesState};
@@ -53,3 +54,7 @@ pub use queue::{NetworkPacket, SpscPacketQueue};
 pub use rolling::{RollingClusterNode, RollingUpgradeSimulator, UpgradeSession};
 pub use soak::{SoakConfig, SoakTelemetry, SoakTestRunner};
 pub use tick::{TickCoordinator, TickMetrics, DEFAULT_TICK_MICROS};
+pub use work_stealing::{
+    ChaseLevDeque, StealResult, WorkStealingError, WorkStealingPool, DEFAULT_DEQUE_CAPACITY,
+    EMPTY_SLOT,
+};

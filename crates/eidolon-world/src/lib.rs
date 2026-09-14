@@ -30,6 +30,7 @@ pub mod predictive_migration;
 pub mod reconstruction;
 pub mod replicated_journal;
 pub mod script_engine;
+pub mod sector_parallel;
 pub mod soa_storage;
 pub mod social;
 pub mod territory;
@@ -104,6 +105,10 @@ pub use replicated_journal::{ReplicatedJournalSink, ReplicationMode};
 pub use script_engine::{
     HostEnvironment, MockHostEnvironment, OpCode, QuestStatus, ScriptVm, VmError,
     DEFAULT_GAS_LIMIT, VM_STACK_CAPACITY, VM_VARS_CAPACITY,
+};
+pub use sector_parallel::{
+    SectorBucket, SectorCoord, SectorJob, SectorMigration, SectorParallelCoordinator,
+    SectorParallelError,
 };
 pub use soa_storage::{ColdEntityMetadata, SoaEntityStorage, SPARSE_SENTINEL};
 pub use social::{
