@@ -7,6 +7,7 @@
 #![warn(missing_docs)]
 
 pub mod authority;
+pub mod behavior_tree;
 pub mod fixed;
 pub mod geom;
 pub mod global_coord;
@@ -15,12 +16,14 @@ pub mod item;
 pub mod kinematics;
 pub mod lock;
 pub mod morton;
+pub mod perception;
 pub mod quant;
 pub mod structure;
 pub mod trace;
 pub mod vehicle;
 
 pub use authority::{AuthorityError, AuthorityFencer, AuthorityToken, AUTHORITY_TOKEN_LEN};
+pub use behavior_tree::{BehaviorTree, BtNode, BtNodeType, BtStatus};
 pub use fixed::{Fixed64, Vec3Fix};
 pub use geom::SpatialGeometry;
 pub use global_coord::{GlobalCoord, SECTOR_EDGE_FIXED, SECTOR_EDGE_METERS};
@@ -40,6 +43,7 @@ pub use morton::{
     morton_encode_u32, morton_encode_vec3, spread_bits_21, MORTON_COORDINATE_BIAS,
     MORTON_MAX_COORDINATE,
 };
+pub use perception::{evaluate_perception, PerceptionResult, SensoryProfile};
 pub use quant::{
     QuantizedCellCoord, QuantizedYaw, CELL_HORIZONTAL_SIZE, CELL_VERTICAL_SIZE,
     HORIZONTAL_RESOLUTION_METERS, MAX_QUANTIZED_HORIZONTAL, MAX_QUANTIZED_VERTICAL,

@@ -35,6 +35,7 @@ use eidolon_world::chunk_manifest::ChunkManifestManager;
 use eidolon_world::durable_journal::DurableFileJournal;
 use eidolon_world::equipment::EquipmentContainer;
 use eidolon_world::interior::InteriorCellManager;
+use eidolon_world::npc_ecosystem::NpcEcosystemManager;
 use eidolon_world::party::{PartyManager, PartyMember};
 use eidolon_world::predictive_migration::PredictiveMigrationPreAuth;
 use eidolon_world::transaction::TransactionManager;
@@ -215,6 +216,9 @@ impl EidolonAppBuilder {
             interior_manager: InteriorCellManager::new(),
             chunk_manifest_manager: ChunkManifestManager::new(),
             continental_orchestrator: None,
+            npc_ecosystem: NpcEcosystemManager::new(),
+            player_coords_scratch: Vec::with_capacity(self.max_entities),
+            player_info_scratch: Vec::with_capacity(self.max_entities),
         })
     }
 }
@@ -245,6 +249,9 @@ pub struct EidolonApp {
     interior_manager: InteriorCellManager,
     chunk_manifest_manager: ChunkManifestManager,
     continental_orchestrator: Option<ContinentalOrchestrator>,
+    npc_ecosystem: NpcEcosystemManager,
+    player_coords_scratch: Vec<(f32, f32, f32)>,
+    player_info_scratch: Vec<(u64, (f32, f32, f32), u32)>,
 }
 
 impl EidolonApp {
@@ -301,6 +308,16 @@ impl EidolonApp {
     /// Returns a mutable reference to the chunk manifest manager.
     pub fn chunk_manifest_manager_mut(&mut self) -> &mut ChunkManifestManager {
         &mut self.chunk_manifest_manager
+    }
+
+    /// Returns a reference to the autonomous NPC ecosystem manager.
+    pub fn npc_ecosystem(&self) -> &NpcEcosystemManager {
+        &self.npc_ecosystem
+    }
+
+    /// Returns a mutable reference to the autonomous NPC ecosystem manager.
+    pub fn npc_ecosystem_mut(&mut self) -> &mut NpcEcosystemManager {
+        &mut self.npc_ecosystem
     }
 
     /// Places a modular prefab structure (e.g. SWG house, harvester) in the world.
@@ -755,7 +772,26 @@ impl EidolonApp {
             }
         }
 
-        // 6. Broadcast AoI State Updates to Connected Player Peers
+        // 6. Update Autonomous NPC Ecosystem simulation (LOD-based evaluation)
+        self.player_coords_scratch.clear();
+        self.player_info_scratch.clear();
+        for entity in self.entities.values() {
+            if entity.entity_type == 0 {
+                let pos = (
+                    entity.position.x.to_f32(),
+                    entity.position.y.to_f32(),
+                    entity.position.z.to_f32(),
+                );
+                self.player_coords_scratch.push(pos);
+                self.player_info_scratch.push((entity.id as u64, pos, 0u32));
+            }
+        }
+        self.npc_ecosystem
+            .update_lod_tiers(&self.player_coords_scratch);
+        self.npc_ecosystem
+            .tick(self.current_tick, 0.050, &self.player_info_scratch);
+
+        // 7. Broadcast AoI State Updates to Connected Player Peers
         self.broadcast_aoi_updates();
 
         Ok(())

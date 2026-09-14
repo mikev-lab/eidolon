@@ -16,14 +16,17 @@ pub mod companion;
 pub mod durable_journal;
 pub mod equipment;
 pub mod error;
+pub mod flocking;
 pub mod hibernation;
 pub mod instance;
 pub mod interior;
+pub mod npc_ecosystem;
 pub mod partition;
 pub mod party;
 pub mod predictive_migration;
 pub mod reconstruction;
 pub mod replicated_journal;
+pub mod threat;
 pub mod transaction;
 pub mod wal;
 pub mod zone;
@@ -56,6 +59,7 @@ pub use companion::{
 pub use durable_journal::{CommitDurability, DurableFileJournal, JOURNAL_MAGIC};
 pub use equipment::EquipmentContainer;
 pub use error::{InstanceId, WorldError, ZoneId};
+pub use flocking::compute_separation;
 pub use hibernation::{
     compute_adler32, hydrate_player_into_zone, CharacterRecord, HibernationHeader, PityState,
     PlayerProfile, HIBERNATION_MAGIC, HIBERNATION_SCHEMA_VERSION, MAX_ROSTER_SIZE,
@@ -64,6 +68,7 @@ pub use instance::{
     DungeonInstance, DungeonPool, InstanceLifecycle, MAX_PARTY_MEMBERS, ROOM_CLEANUP_TIMEOUT_TICKS,
 };
 pub use interior::{InteriorCell, InteriorCellManager, MAX_INTERIOR_ITEMS_PER_BUILDING};
+pub use npc_ecosystem::{NpcEcosystemManager, NpcEntity, NpcLodTier, NpcState};
 pub use partition::{
     BoundaryLease, EntityPartitionState, ZonePartitionDetector, ZonePartitionManager,
     DEFAULT_LEASE_DURATION_TICKS, DEFAULT_PARTITION_TIMEOUT_TICKS,
@@ -78,6 +83,7 @@ pub use reconstruction::{
     ZoneCheckpoint,
 };
 pub use replicated_journal::{ReplicatedJournalSink, ReplicationMode};
+pub use threat::{ThreatEntry, ThreatTable};
 pub use transaction::{
     AccountState, InventoryItem, TransactionManager, TransactionOp, TransactionStatus,
     LOCK_INVENTORY, LOCK_WALLET, MAX_DEDUP_HISTORY, MAX_INVENTORY_SLOTS,
