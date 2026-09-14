@@ -239,20 +239,22 @@ Measured via native hardware timer suite (`crates/eidolon-server/tests/microbenc
 
 | Operation | Implementation Path | Latency (ns/op) | Throughput |
 | :--- | :--- | :--- | :--- |
-| `Fixed64::saturating_mul` | 32.32 Fixed-Point Integer Multiply | **1.00 ns** | ~1.00 Billion ops/sec |
-| `Fixed64::clamp` | Branchless Coordinate Clamping | **0.69 ns** | ~1.45 Billion ops/sec |
-| `Fixed64::sqrt` | Integer Bitwise Square Root | **60.22 ns** | ~16.6 Million ops/sec |
-| `Vec3Fix::distance_squared` | 3D Squared Euclidean Distance | **2.12 ns** | ~471 Million ops/sec |
-| `Vec3Fix::batch_distance_squared_4x` | 4-Wide SIMD Lane Batching | **7.62 ns** (1.9 ns/lane) | ~131 Million batches/sec |
-| `QuantizedCellCoord::quantize` | Branchless 44-bit Quantization | **1.06 ns** | ~945 Million ops/sec |
-| `QuantizedCellCoord::pack` | 7-Byte Wire Bitpack (Coord+Yaw+Flags) | **0.75 ns** | ~1.33 Billion ops/sec |
-| `QuantizedCellCoord::unpack` | 7-Byte Wire Bitstream Unpack | **0.84 ns** | ~1.18 Billion ops/sec |
-| `BitWriter::write_bits` | Register-Width Bitstream Ingestion | **34.33 ns** | ~29.1 Million ops/sec |
-| `BitReader::read_bits` | Register-Width Bitstream Extraction | **10.02 ns** | ~99.7 Million ops/sec |
-| `SpatialHashGrid::query_radius_batched` | 4-Wide SIMD 9-Cell Neighborhood Query | **4,969 ns** (4.97 µs) | ~201 Thousand queries/sec |
-| `kinematics::extrapolate` | Second-Order Intent Extrapolation | **9.00 ns** | ~111 Million ops/sec |
-| `kinematics::should_dispatch_update` | Predictive Velocity Deadband Check | **4.53 ns** | ~220 Million ops/sec |
-| `SpscPacketQueue::try_push + try_pop` | Bounded SPSC Queue Roundtrip | **62.43 ns** | ~16.0 Million ops/sec |
+| `Fixed64::saturating_mul` | 32.32 Fixed-Point Integer Multiply | **0.81 ns** | ~1.24 Billion ops/sec |
+| `Fixed64::clamp` | Branchless Coordinate Clamping | **0.64 ns** | ~1.56 Billion ops/sec |
+| `Fixed64::sqrt` | Integer Bitwise Square Root (Leading Zeros Seed) | **52.00 ns** | ~19.2 Million ops/sec |
+| `Vec3Fix::distance_squared` | 3D Squared Euclidean Distance (Scalar) | **2.15 ns** | ~465 Million ops/sec |
+| `Vec3Fix::batch_distance_squared_4x` | 4-Wide SIMD Lane Batching | **7.73 ns** (1.93 ns/lane) | ~129 Million batches/sec |
+| `Vec3Fix::batch_distance_squared_8x` | 8-Wide SIMD Lane Batching | **14.03 ns** (1.75 ns/lane) | ~71.2 Million batches/sec |
+| `Vec3Fix8x::step_kinematics_chunk` | 8-Wide SIMD Kinematics Integration | **14.73 ns** (1.84 ns/entity) | ~67.8 Million chunks/sec |
+| `QuantizedCellCoord::quantize` | Branchless 44-bit Quantization | **1.17 ns** | ~853 Million ops/sec |
+| `QuantizedCellCoord::pack` | 7-Byte Wire Bitpack (Coord+Yaw+Flags) | **0.72 ns** | ~1.39 Billion ops/sec |
+| `QuantizedCellCoord::unpack` | 7-Byte Wire Bitstream Unpack | **0.81 ns** | ~1.23 Billion ops/sec |
+| `BitWriter::write_bits` | Register-Width Bitstream Ingestion | **8.55 ns** | ~117 Million ops/sec |
+| `BitReader::read_bits` | Register-Width Bitstream Extraction | **8.16 ns** | ~122 Million ops/sec |
+| `SpatialHashGrid::query_radius_batched_8x` | 8-Wide SIMD 9-Cell Neighborhood Query | **5,301 ns** (5.30 µs) | ~188 Thousand queries/sec |
+| `kinematics::extrapolate` | Second-Order Intent Extrapolation | **8.57 ns** | ~116 Million ops/sec |
+| `kinematics::should_dispatch_update` | Predictive Velocity Deadband Check | **4.59 ns** | ~217 Million ops/sec |
+| `SpscPacketQueue::try_push + try_pop` | Bounded SPSC Queue Roundtrip | **61.18 ns** | ~16.3 Million ops/sec |
 
 ### 3. Simulation Latency Percentiles (2,000 CCU, 20 Hz Simulation)
 
