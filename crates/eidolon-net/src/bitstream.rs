@@ -4,9 +4,88 @@
 //! with safe bounds checks, variable-length integer (varint) encodings, and byte alignment.
 
 use eidolon_core::delta::{DeltaTier, DeltaTransform};
-use eidolon_core::quant::{QuantizedCellCoord, QuantizedYaw};
+use eidolon_core::quant::{
+    HorizonQuantizedCoord, MidfieldQuantizedCoord, QuantizedCellCoord, QuantizedYaw,
+    QuantizedYaw4Bit, QuantizedYaw6Bit,
+};
 
 use crate::error::BitstreamError;
+
+/// Multi-resolution AoI distance tier tag for dynamic bitrate scaling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum MultiResTier {
+    /// Tactical Tier (<10m): 2-bit tag `00`. Full 16-bit cell-relative quantization (7 bytes).
+    Tactical = 0b00,
+    /// Midfield Tier (10m - 30m): 2-bit tag `01`. 10-bit cell-relative quantization (5 bytes).
+    Midfield = 0b01,
+    /// Horizon Tier (>30m): 2-bit tag `10`. 6-bit cell-relative quantization (3 bytes).
+    Horizon = 0b10,
+    /// Stationary Tier: 2-bit tag `11`. Zero payload (0 bytes).
+    Stationary = 0b11,
+}
+
+impl MultiResTier {
+    /// Returns the 2-bit wire tag.
+    #[inline]
+    pub const fn tag(self) -> u8 {
+        self as u8
+    }
+
+    /// Reconstructs the tier from a 2-bit integer tag.
+    #[inline]
+    pub const fn from_tag(tag: u8) -> Self {
+        match tag & 0x03 {
+            0b00 => Self::Tactical,
+            0b01 => Self::Midfield,
+            0b10 => Self::Horizon,
+            _ => Self::Stationary,
+        }
+    }
+}
+
+/// Multi-resolution spatial transform update payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MultiResTransform {
+    /// Full precision tactical update (<10m): 7 bytes.
+    Tactical {
+        /// Cell-relative 16-bit coordinates.
+        coord: QuantizedCellCoord,
+        /// 8-bit discrete yaw.
+        yaw: QuantizedYaw,
+        /// 4-bit movement flags.
+        flags: u8,
+    },
+    /// Medium precision midfield update (10m-30m): 5 bytes.
+    Midfield {
+        /// Cell-relative 10-bit coordinates.
+        coord: MidfieldQuantizedCoord,
+        /// 6-bit discrete yaw.
+        yaw: QuantizedYaw6Bit,
+        /// 4-bit movement flags.
+        flags: u8,
+    },
+    /// Coarse horizon update (>30m): 3 bytes.
+    Horizon {
+        /// Cell-relative 6-bit coordinates.
+        coord: HorizonQuantizedCoord,
+        /// 4-bit discrete heading.
+        heading: QuantizedYaw4Bit,
+        /// 3-bit movement flags.
+        flags: u8,
+    },
+    /// Motionless entity: 0 payload bytes.
+    Stationary,
+}
+
+/// Single entity update entry within a multi-resolution replication batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MultiResBatchEntry {
+    /// Authoritative entity ID.
+    pub entity_id: u32,
+    /// Distance-adaptive transform update.
+    pub transform: MultiResTransform,
+}
 
 /// Bounded bitstream writer operating directly on caller-provided byte slices.
 #[derive(Debug)]
@@ -312,6 +391,50 @@ impl<'a> BitWriter<'a> {
             }
         }
     }
+
+    /// Writes a distance-adaptive multi-resolution transform update into the bitstream.
+    pub fn write_multires_transform(
+        &mut self,
+        transform: &MultiResTransform,
+    ) -> Result<(), BitstreamError> {
+        match *transform {
+            MultiResTransform::Stationary => {
+                self.write_bits(MultiResTier::Stationary.tag() as u64, 2)
+            }
+            MultiResTransform::Tactical { coord, yaw, flags } => {
+                self.write_bits(MultiResTier::Tactical.tag() as u64, 2)?;
+                let buf = coord.pack_with_yaw_and_flags(yaw, flags);
+                self.write_bytes(&buf)
+            }
+            MultiResTransform::Midfield { coord, yaw, flags } => {
+                self.write_bits(MultiResTier::Midfield.tag() as u64, 2)?;
+                let buf = coord.pack(yaw, flags);
+                self.write_bytes(&buf)
+            }
+            MultiResTransform::Horizon {
+                coord,
+                heading,
+                flags,
+            } => {
+                self.write_bits(MultiResTier::Horizon.tag() as u64, 2)?;
+                let buf = coord.pack(heading, flags);
+                self.write_bytes(&buf)
+            }
+        }
+    }
+
+    /// Writes a batch of multi-resolution entity updates into the bitstream.
+    pub fn write_multires_batch(
+        &mut self,
+        entries: &[MultiResBatchEntry],
+    ) -> Result<(), BitstreamError> {
+        self.write_varint(entries.len() as u64)?;
+        for entry in entries {
+            self.write_varint(entry.entity_id as u64)?;
+            self.write_multires_transform(&entry.transform)?;
+        }
+        Ok(())
+    }
 }
 
 /// Bounded bitstream reader operating directly on caller-provided immutable byte slices.
@@ -580,6 +703,56 @@ impl<'a> BitReader<'a> {
         }
     }
 
+    /// Reads a distance-adaptive multi-resolution transform update from the bitstream.
+    pub fn read_multires_transform(&mut self) -> Result<MultiResTransform, BitstreamError> {
+        let tag = self.read_bits(2)? as u8;
+        let tier = MultiResTier::from_tag(tag);
+        match tier {
+            MultiResTier::Stationary => Ok(MultiResTransform::Stationary),
+            MultiResTier::Tactical => {
+                let mut buf = [0u8; 7];
+                self.read_bytes(&mut buf)?;
+                let (coord, yaw, flags) = QuantizedCellCoord::unpack_with_yaw_and_flags(buf);
+                Ok(MultiResTransform::Tactical { coord, yaw, flags })
+            }
+            MultiResTier::Midfield => {
+                let mut buf = [0u8; 5];
+                self.read_bytes(&mut buf)?;
+                let (coord, yaw, flags) = MidfieldQuantizedCoord::unpack(buf);
+                Ok(MultiResTransform::Midfield { coord, yaw, flags })
+            }
+            MultiResTier::Horizon => {
+                let mut buf = [0u8; 3];
+                self.read_bytes(&mut buf)?;
+                let (coord, heading, flags) = HorizonQuantizedCoord::unpack(buf);
+                Ok(MultiResTransform::Horizon {
+                    coord,
+                    heading,
+                    flags,
+                })
+            }
+        }
+    }
+
+    /// Reads a batch of multi-resolution entity updates from the bitstream.
+    pub fn read_multires_batch(
+        &mut self,
+        out: &mut Vec<MultiResBatchEntry>,
+    ) -> Result<usize, BitstreamError> {
+        let count = self.read_varint()? as usize;
+        out.clear();
+        out.reserve(count);
+        for _ in 0..count {
+            let entity_id = self.read_varint()? as u32;
+            let transform = self.read_multires_transform()?;
+            out.push(MultiResBatchEntry {
+                entity_id,
+                transform,
+            });
+        }
+        Ok(count)
+    }
+
     /// Aligns read cursor to the next byte boundary.
     #[inline]
     pub fn align_to_byte(&mut self) {
@@ -714,5 +887,87 @@ mod tests {
             let decoded = reader.read_delta_transform().expect("read delta");
             assert_eq!(*delta, decoded);
         }
+    }
+
+    #[test]
+    fn test_multires_transform_bitstream_roundtrip() {
+        let tactical = MultiResTransform::Tactical {
+            coord: QuantizedCellCoord::new(1000, 200, 3000),
+            yaw: QuantizedYaw::from_degrees(45.0),
+            flags: 0x03,
+        };
+        let midfield = MultiResTransform::Midfield {
+            coord: MidfieldQuantizedCoord::from_f64(20.0, 10.0, 30.0),
+            yaw: QuantizedYaw6Bit::from_degrees(90.0),
+            flags: 0x05,
+        };
+        let horizon = MultiResTransform::Horizon {
+            coord: HorizonQuantizedCoord::from_f64(40.0, 20.0, 50.0),
+            heading: QuantizedYaw4Bit::from_degrees(180.0),
+            flags: 0x02,
+        };
+        let stationary = MultiResTransform::Stationary;
+
+        let entries = [tactical, midfield, horizon, stationary];
+
+        let mut buf = [0u8; 64];
+        let mut writer = BitWriter::new(&mut buf);
+        for item in &entries {
+            writer
+                .write_multires_transform(item)
+                .expect("write multires");
+        }
+
+        let mut reader = BitReader::new(writer.as_bytes());
+        for item in &entries {
+            let decoded = reader.read_multires_transform().expect("read multires");
+            assert_eq!(*item, decoded);
+        }
+    }
+
+    #[test]
+    fn test_multires_batch_roundtrip() {
+        let batch = [
+            MultiResBatchEntry {
+                entity_id: 101,
+                transform: MultiResTransform::Tactical {
+                    coord: QuantizedCellCoord::new(500, 100, 800),
+                    yaw: QuantizedYaw::from_degrees(0.0),
+                    flags: 0x01,
+                },
+            },
+            MultiResBatchEntry {
+                entity_id: 102,
+                transform: MultiResTransform::Midfield {
+                    coord: MidfieldQuantizedCoord::from_f64(15.0, 5.0, 25.0),
+                    yaw: QuantizedYaw6Bit::from_degrees(180.0),
+                    flags: 0x04,
+                },
+            },
+            MultiResBatchEntry {
+                entity_id: 103,
+                transform: MultiResTransform::Horizon {
+                    coord: HorizonQuantizedCoord::from_f64(55.0, 12.0, 45.0),
+                    heading: QuantizedYaw4Bit::from_degrees(270.0),
+                    flags: 0x07,
+                },
+            },
+            MultiResBatchEntry {
+                entity_id: 104,
+                transform: MultiResTransform::Stationary,
+            },
+        ];
+
+        let mut buf = [0u8; 128];
+        let mut writer = BitWriter::new(&mut buf);
+        writer.write_multires_batch(&batch).expect("write batch");
+
+        let mut reader = BitReader::new(writer.as_bytes());
+        let mut recovered = Vec::new();
+        let count = reader
+            .read_multires_batch(&mut recovered)
+            .expect("read batch");
+        assert_eq!(count, batch.len());
+        assert_eq!(&batch[..], &recovered[..]);
     }
 }

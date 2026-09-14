@@ -65,7 +65,8 @@ pub use morton::{
 };
 pub use perception::{evaluate_perception, PerceptionResult, SensoryProfile};
 pub use quant::{
-    QuantizedCellCoord, QuantizedYaw, CELL_HORIZONTAL_SIZE, CELL_VERTICAL_SIZE,
+    HorizonQuantizedCoord, MidfieldQuantizedCoord, QuantizedCellCoord, QuantizedYaw,
+    QuantizedYaw4Bit, QuantizedYaw6Bit, CELL_HORIZONTAL_SIZE, CELL_VERTICAL_SIZE,
     HORIZONTAL_RESOLUTION_METERS, MAX_QUANTIZED_HORIZONTAL, MAX_QUANTIZED_VERTICAL,
     VERTICAL_RESOLUTION_METERS,
 };
@@ -203,6 +204,53 @@ mod tests {
         assert_eq!(unpacked_coord.z, original_coord.z);
         assert_eq!(unpacked_yaw, original_yaw);
         assert_eq!(unpacked_flags, original_flags & 0x0F);
+    }
+
+    #[test]
+    fn test_midfield_quantized_coord_roundtrip() {
+        let coord = MidfieldQuantizedCoord::from_f64(32.5, 16.2, 48.7);
+        let yaw = QuantizedYaw6Bit::from_degrees(120.0);
+        let flags = 0x09;
+
+        let packed = coord.pack(yaw, flags);
+        assert_eq!(packed.len(), 5);
+
+        let (unpacked_coord, unpacked_yaw, unpacked_flags) = MidfieldQuantizedCoord::unpack(packed);
+        assert_eq!(unpacked_coord.x, coord.x);
+        assert_eq!(unpacked_coord.y, coord.y);
+        assert_eq!(unpacked_coord.z, coord.z);
+        assert_eq!(unpacked_yaw, yaw);
+        assert_eq!(unpacked_flags, flags);
+
+        // Verify precision: error must be < 6.3cm horizontal, < 13cm vertical
+        let (rx, ry, rz) = unpacked_coord.to_f64();
+        assert!((rx - 32.5).abs() < 0.063);
+        assert!((ry - 16.2).abs() < 0.13);
+        assert!((rz - 48.7).abs() < 0.063);
+    }
+
+    #[test]
+    fn test_horizon_quantized_coord_roundtrip() {
+        let coord = HorizonQuantizedCoord::from_f64(32.0, 16.0, 48.0);
+        let heading = QuantizedYaw4Bit::from_degrees(270.0);
+        let flags = 0x05;
+
+        let packed = coord.pack(heading, flags);
+        assert_eq!(packed.len(), 3);
+
+        let (unpacked_coord, unpacked_heading, unpacked_flags) =
+            HorizonQuantizedCoord::unpack(packed);
+        assert_eq!(unpacked_coord.x, coord.x);
+        assert_eq!(unpacked_coord.y, coord.y);
+        assert_eq!(unpacked_coord.z, coord.z);
+        assert_eq!(unpacked_heading, heading);
+        assert_eq!(unpacked_flags, flags);
+
+        // Verify precision: error must be < 1.05m
+        let (rx, ry, rz) = unpacked_coord.to_f64();
+        assert!((rx - 32.0).abs() < 1.05);
+        assert!((ry - 16.0).abs() < 1.05);
+        assert!((rz - 48.0).abs() < 1.05);
     }
 
     #[test]

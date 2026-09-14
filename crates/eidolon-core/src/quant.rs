@@ -297,3 +297,237 @@ impl QuantizedYaw {
         }
     }
 }
+
+/// 6-bit discrete yaw heading (64 discrete angles, approx 5.625 degree resolution).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct QuantizedYaw6Bit(pub u8);
+
+impl QuantizedYaw6Bit {
+    /// Discrete angular step size in degrees (360.0 / 64 = 5.625 degrees).
+    pub const STEP_DEGREES: f64 = 360.0 / 64.0;
+
+    /// Constructs 6-bit quantized yaw from degrees [0, 360).
+    pub fn from_degrees(deg: f64) -> Self {
+        let norm = deg.rem_euclid(360.0);
+        let discrete = (norm / 360.0 * 64.0).round() as u32;
+        Self((discrete % 64) as u8)
+    }
+
+    /// Converts 6-bit quantized yaw to degrees.
+    pub fn to_degrees(self) -> f64 {
+        (self.0 as f64) * Self::STEP_DEGREES
+    }
+
+    /// Downsamples standard 8-bit QuantizedYaw to 6-bit resolution.
+    #[inline]
+    pub const fn from_quantized_yaw(yaw: QuantizedYaw) -> Self {
+        Self(yaw.as_byte() >> 2)
+    }
+
+    /// Upsamples 6-bit resolution to standard 8-bit QuantizedYaw.
+    #[inline]
+    pub const fn to_quantized_yaw(self) -> QuantizedYaw {
+        QuantizedYaw((self.0 & 0x3F) << 2)
+    }
+}
+
+/// 4-bit discrete heading (16 discrete angles, approx 22.5 degree resolution).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct QuantizedYaw4Bit(pub u8);
+
+impl QuantizedYaw4Bit {
+    /// Discrete angular step size in degrees (360.0 / 16 = 22.5 degrees).
+    pub const STEP_DEGREES: f64 = 360.0 / 16.0;
+
+    /// Constructs 4-bit quantized yaw from degrees [0, 360).
+    pub fn from_degrees(deg: f64) -> Self {
+        let norm = deg.rem_euclid(360.0);
+        let discrete = (norm / 360.0 * 16.0).round() as u32;
+        Self((discrete % 16) as u8)
+    }
+
+    /// Converts 4-bit quantized yaw to degrees.
+    pub fn to_degrees(self) -> f64 {
+        (self.0 as f64) * Self::STEP_DEGREES
+    }
+
+    /// Downsamples standard 8-bit QuantizedYaw to 4-bit resolution.
+    #[inline]
+    pub const fn from_quantized_yaw(yaw: QuantizedYaw) -> Self {
+        Self(yaw.as_byte() >> 4)
+    }
+
+    /// Upsamples 4-bit resolution to standard 8-bit QuantizedYaw.
+    #[inline]
+    pub const fn to_quantized_yaw(self) -> QuantizedYaw {
+        QuantizedYaw((self.0 & 0x0F) << 4)
+    }
+}
+
+/// Midfield tier cell-relative quantized coordinates (10-bit X, 8-bit Y, 10-bit Z).
+///
+/// Encodes horizontal coordinates at 6.25 cm precision and vertical elevation at 12.5 cm precision.
+/// Bitpacked with 6-bit yaw and 4-bit flags into an exact 5-byte buffer (28.6% bandwidth reduction).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct MidfieldQuantizedCoord {
+    /// 10-bit quantized X offset within cell (0..=1023).
+    pub x: u16,
+    /// 8-bit quantized Y elevation within vertical band (0..=255).
+    pub y: u8,
+    /// 10-bit quantized Z offset within cell (0..=1023).
+    pub z: u16,
+}
+
+impl MidfieldQuantizedCoord {
+    /// Maximum 10-bit horizontal representation.
+    pub const MAX_HORIZONTAL: u16 = 1023;
+    /// Maximum 8-bit vertical representation.
+    pub const MAX_VERTICAL: u8 = 255;
+    /// Horizontal resolution in meters: 64.0 / 1023.0 approx 0.06256m (6.25 cm).
+    pub const HORIZONTAL_RESOLUTION_METERS: f64 = 64.0 / 1023.0;
+    /// Vertical resolution in meters: 32.0 / 255.0 approx 0.1255m (12.5 cm).
+    pub const VERTICAL_RESOLUTION_METERS: f64 = 32.0 / 255.0;
+
+    /// Constructs a midfield coordinate from continuous coordinates.
+    pub fn from_f64(local_x: f64, local_y: f64, local_z: f64) -> Self {
+        let q_x = (local_x.clamp(0.0, 64.0) / 64.0 * 1023.0).round() as u32;
+        let q_y = (local_y.clamp(0.0, 32.0) / 32.0 * 255.0).round() as u32;
+        let q_z = (local_z.clamp(0.0, 64.0) / 64.0 * 1023.0).round() as u32;
+        Self {
+            x: q_x.min(1023) as u16,
+            y: q_y.min(255) as u8,
+            z: q_z.min(1023) as u16,
+        }
+    }
+
+    /// Constructs a midfield coordinate from fixed-point coordinates.
+    pub fn quantize(local_x: Fixed64, local_y: Fixed64, local_z: Fixed64) -> Self {
+        Self::from_f64(local_x.to_f64(), local_y.to_f64(), local_z.to_f64())
+    }
+
+    /// Dequantizes to continuous f64 coordinates (x, y, z).
+    pub fn to_f64(self) -> (f64, f64, f64) {
+        (
+            (self.x as f64) * Self::HORIZONTAL_RESOLUTION_METERS,
+            (self.y as f64) * Self::VERTICAL_RESOLUTION_METERS,
+            (self.z as f64) * Self::HORIZONTAL_RESOLUTION_METERS,
+        )
+    }
+
+    /// Dequantizes to fixed-point Vec3Fix.
+    pub fn dequantize(self) -> Vec3Fix {
+        let (x, y, z) = self.to_f64();
+        Vec3Fix::from_f64(x, y, z)
+    }
+
+    /// Packs midfield coordinate, 6-bit yaw, and 4-bit flags into an exact 5-byte wire buffer.
+    pub fn pack(self, yaw: QuantizedYaw6Bit, flags: u8) -> [u8; 5] {
+        let x_val = self.x & 0x03FF;
+        let z_val = self.z & 0x03FF;
+        let y_val = self.y;
+        let yaw_val = yaw.0 & 0x3F;
+        let flags_nibble = flags & 0x0F;
+
+        [
+            (x_val & 0xFF) as u8,
+            (((x_val >> 8) & 0x03) as u8) | (((z_val & 0x3F) as u8) << 2),
+            (((z_val >> 6) & 0x0F) as u8) | ((y_val & 0x0F) << 4),
+            ((y_val >> 4) & 0x0F) | ((yaw_val & 0x0F) << 4),
+            ((yaw_val >> 4) & 0x03) | (flags_nibble << 2),
+        ]
+    }
+
+    /// Unpacks midfield coordinate, 6-bit yaw, and 4-bit flags from a 5-byte buffer.
+    pub fn unpack(bytes: [u8; 5]) -> (Self, QuantizedYaw6Bit, u8) {
+        let x = (bytes[0] as u16) | (((bytes[1] & 0x03) as u16) << 8);
+        let z = (((bytes[1] >> 2) & 0x3F) as u16) | (((bytes[2] & 0x0F) as u16) << 6);
+        let y = ((bytes[2] >> 4) & 0x0F) | ((bytes[3] & 0x0F) << 4);
+        let yaw = ((bytes[3] >> 4) & 0x0F) | ((bytes[4] & 0x03) << 4);
+        let flags = (bytes[4] >> 2) & 0x0F;
+
+        (Self { x, y, z }, QuantizedYaw6Bit(yaw), flags)
+    }
+}
+
+/// Horizon tier cell-relative quantized coordinates (6-bit X, 5-bit Y, 6-bit Z).
+///
+/// Encodes horizontal coordinates at 1.0 m precision and vertical elevation at 1.0 m precision.
+/// Bitpacked with 4-bit heading and 3-bit flags into an exact 3-byte buffer (57.1% bandwidth reduction).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct HorizonQuantizedCoord {
+    /// 6-bit quantized X offset within cell (0..=63).
+    pub x: u8,
+    /// 5-bit quantized Y elevation within vertical band (0..=31).
+    pub y: u8,
+    /// 6-bit quantized Z offset within cell (0..=63).
+    pub z: u8,
+}
+
+impl HorizonQuantizedCoord {
+    /// Maximum 6-bit horizontal representation.
+    pub const MAX_HORIZONTAL: u8 = 63;
+    /// Maximum 5-bit vertical representation.
+    pub const MAX_VERTICAL: u8 = 31;
+    /// Horizontal resolution in meters: 64.0 / 63.0 approx 1.016m (approx 1.0 m).
+    pub const HORIZONTAL_RESOLUTION_METERS: f64 = 64.0 / 63.0;
+    /// Vertical resolution in meters: 32.0 / 31.0 approx 1.032m (approx 1.0 m).
+    pub const VERTICAL_RESOLUTION_METERS: f64 = 32.0 / 31.0;
+
+    /// Constructs a horizon coordinate from continuous coordinates.
+    pub fn from_f64(local_x: f64, local_y: f64, local_z: f64) -> Self {
+        let q_x = (local_x.clamp(0.0, 64.0) / 64.0 * 63.0).round() as u32;
+        let q_y = (local_y.clamp(0.0, 32.0) / 32.0 * 31.0).round() as u32;
+        let q_z = (local_z.clamp(0.0, 64.0) / 64.0 * 63.0).round() as u32;
+        Self {
+            x: q_x.min(63) as u8,
+            y: q_y.min(31) as u8,
+            z: q_z.min(63) as u8,
+        }
+    }
+
+    /// Constructs a horizon coordinate from fixed-point coordinates.
+    pub fn quantize(local_x: Fixed64, local_y: Fixed64, local_z: Fixed64) -> Self {
+        Self::from_f64(local_x.to_f64(), local_y.to_f64(), local_z.to_f64())
+    }
+
+    /// Dequantizes to continuous f64 coordinates (x, y, z).
+    pub fn to_f64(self) -> (f64, f64, f64) {
+        (
+            (self.x as f64) * Self::HORIZONTAL_RESOLUTION_METERS,
+            (self.y as f64) * Self::VERTICAL_RESOLUTION_METERS,
+            (self.z as f64) * Self::HORIZONTAL_RESOLUTION_METERS,
+        )
+    }
+
+    /// Dequantizes to fixed-point Vec3Fix.
+    pub fn dequantize(self) -> Vec3Fix {
+        let (x, y, z) = self.to_f64();
+        Vec3Fix::from_f64(x, y, z)
+    }
+
+    /// Packs horizon coordinate, 4-bit heading, and 3-bit flags into an exact 3-byte wire buffer.
+    pub fn pack(self, heading: QuantizedYaw4Bit, flags: u8) -> [u8; 3] {
+        let x_val = self.x & 0x3F;
+        let z_val = self.z & 0x3F;
+        let y_val = self.y & 0x1F;
+        let heading_val = heading.0 & 0x0F;
+        let flags_val = flags & 0x07;
+
+        [
+            x_val | ((z_val & 0x03) << 6),
+            ((z_val >> 2) & 0x0F) | ((y_val & 0x0F) << 4),
+            ((y_val >> 4) & 0x01) | (heading_val << 1) | (flags_val << 5),
+        ]
+    }
+
+    /// Unpacks horizon coordinate, 4-bit heading, and 3-bit flags from a 3-byte buffer.
+    pub fn unpack(bytes: [u8; 3]) -> (Self, QuantizedYaw4Bit, u8) {
+        let x = bytes[0] & 0x3F;
+        let z = ((bytes[0] >> 6) & 0x03) | ((bytes[1] & 0x0F) << 2);
+        let y = ((bytes[1] >> 4) & 0x0F) | ((bytes[2] & 0x01) << 4);
+        let heading = (bytes[2] >> 1) & 0x0F;
+        let flags = (bytes[2] >> 5) & 0x07;
+
+        (Self { x, y, z }, QuantizedYaw4Bit(heading), flags)
+    }
+}

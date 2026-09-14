@@ -42,7 +42,7 @@ pub use backpressure::{
     BoundedIngressQueue, PrioritizedPacket,
 };
 pub use batch_io::{DatagramBatch, DatagramSlot, PacketBufferPool, PacketRateMonitor};
-pub use bitstream::{BitReader, BitWriter};
+pub use bitstream::{BitReader, BitWriter, MultiResBatchEntry, MultiResTier, MultiResTransform};
 pub use channel::{
     IncomingReliablePacket, PendingReliablePacket, ReliableChannel, UnreliableSequencer,
 };
