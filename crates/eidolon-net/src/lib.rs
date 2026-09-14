@@ -55,8 +55,9 @@ pub use impairment::{
     NetworkImpairmentHarness,
 };
 pub use io_uring::{
-    IoUringCqEntry, IoUringDriver, IoUringError, IoUringParams, IoUringRingBuffer, IoUringSqEntry,
-    IORING_OP_RECVMSG, IORING_OP_SENDMSG, IORING_SETUP_SQPOLL, PACKET_BUFFER_SIZE,
+    AlignedPacketBuffer, DmaRegisteredBufferPool, IoUringCqEntry, IoUringDriver, IoUringError,
+    IoUringParams, IoUringRingBuffer, IoUringSqEntry, IORING_OP_RECVMSG, IORING_OP_SENDMSG,
+    IORING_SETUP_SQPOLL, PACKET_BUFFER_SIZE,
 };
 pub use packet::{CompactPacketHeader, HeaderKind, PacketHeader, PacketView, UnifiedPacketView};
 pub use pcap::{PcapWriter, LINKTYPE_ETHERNET, PCAP_MAGIC_NUMBER};

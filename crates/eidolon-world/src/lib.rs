@@ -112,8 +112,9 @@ pub use sector_parallel::{
     SectorParallelError,
 };
 pub use soa_storage::{
-    ColdEntityMetadata, EntityComponent2ndOrderSlices, EntityComponentSlices, EntitySpawnParams,
-    SoaEntityStorage, SPARSE_SENTINEL,
+    AlignedBlockStorage, AlignedEntityBlock64, AlignedSoAChunk8, ColdEntityMetadata,
+    EntityComponent2ndOrderSlices, EntityComponentSlices, EntitySpawnParams, SoaEntityStorage,
+    SPARSE_SENTINEL,
 };
 pub use social::{
     Alliance, DiplomaticStatus, Guild, GuildMember, SocialError, SocialManager,

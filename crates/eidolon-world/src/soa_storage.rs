@@ -518,6 +518,19 @@ impl SoaEntityStorage {
         (&mut self.health, &self.max_health)
     }
 
+    /// Returns current and maximum health points of an entity if present.
+    pub fn get_health(&self, id: u32) -> Option<(u32, u32)> {
+        let id_idx = id as usize;
+        if id_idx < self.sparse_to_dense.len() {
+            let dense_idx = self.sparse_to_dense[id_idx];
+            if dense_idx != SPARSE_SENTINEL {
+                let idx = dense_idx as usize;
+                return Some((self.health[idx], self.max_health[idx]));
+            }
+        }
+        None
+    }
+
     /// Returns a reference to an entity's cold metadata if present.
     pub fn get_cold_data(&self, id: u32) -> Option<&ColdEntityMetadata> {
         let id_idx = id as usize;
@@ -540,6 +553,542 @@ impl SoaEntityStorage {
             }
         }
         None
+    }
+    /// Exports all active entities into contiguous 64-byte cache-line aligned blocks.
+    pub fn to_aligned_blocks(&self) -> Vec<AlignedEntityBlock64> {
+        let count = self.ids.len();
+        let mut blocks = Vec::with_capacity(count);
+        for i in 0..count {
+            blocks.push(AlignedEntityBlock64 {
+                position: self.positions[i],
+                velocity: self.velocities[i],
+                entity_id: self.ids[i],
+                heading: self.headings[i],
+                flags: self.flags[i],
+                health: self.health[i].min(u16::MAX as u32) as u16,
+                max_health: self.max_health[i].min(u16::MAX as u32) as u16,
+                generation: 0,
+                _reserved: [0; 4],
+            });
+        }
+        blocks
+    }
+
+    /// Populates positions, velocities, headings, and flags from updated 64-byte aligned blocks.
+    pub fn update_from_aligned_blocks(&mut self, blocks: &[AlignedEntityBlock64]) {
+        let count = self.ids.len().min(blocks.len());
+        for (i, block) in blocks.iter().enumerate().take(count) {
+            self.positions[i] = block.position;
+            self.velocities[i] = block.velocity;
+            self.headings[i] = block.heading;
+            self.flags[i] = block.flags;
+        }
+    }
+}
+
+/// Individual entity kinematic block aligned to a 64-byte hardware CPU cache line.
+///
+/// Ensures that loading an entity's position pre-fetches velocity, heading, flags, and health
+/// into L1 data cache in a single 64-byte memory transaction with zero false sharing or split-cache stalls.
+#[repr(C, align(64))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlignedEntityBlock64 {
+    /// 3D position in 32.32 fixed-point (24 bytes).
+    pub position: Vec3Fix,
+    /// 3D velocity in 32.32 fixed-point (24 bytes).
+    pub velocity: Vec3Fix,
+    /// Authoritative entity identifier (4 bytes).
+    pub entity_id: u32,
+    /// Facing yaw heading (1 byte).
+    pub heading: QuantizedYaw,
+    /// Movement state and flags (1 byte).
+    pub flags: u8,
+    /// Current health points (2 bytes).
+    pub health: u16,
+    /// Maximum health points (2 bytes).
+    pub max_health: u16,
+    /// Lifecycle or sync generation counter (2 bytes).
+    pub generation: u16,
+    /// Reserved padding ensuring exact 64-byte size (4 bytes).
+    pub _reserved: [u8; 4],
+}
+
+// Compile-time assertions verifying exact 64-byte size and alignment.
+const _: () = assert!(core::mem::size_of::<AlignedEntityBlock64>() == 64);
+const _: () = assert!(core::mem::align_of::<AlignedEntityBlock64>() == 64);
+
+impl AlignedEntityBlock64 {
+    /// Constructs a new 64-byte aligned entity block with default health and generation.
+    pub fn new(
+        entity_id: u32,
+        position: Vec3Fix,
+        velocity: Vec3Fix,
+        heading: QuantizedYaw,
+    ) -> Self {
+        Self {
+            position,
+            velocity,
+            entity_id,
+            heading,
+            flags: 0,
+            health: 100,
+            max_health: 100,
+            generation: 0,
+            _reserved: [0; 4],
+        }
+    }
+
+    /// Constructs a new 64-byte aligned entity block with explicit health attributes.
+    pub fn with_health(
+        entity_id: u32,
+        position: Vec3Fix,
+        velocity: Vec3Fix,
+        heading: QuantizedYaw,
+        health: u16,
+        max_health: u16,
+    ) -> Self {
+        Self {
+            position,
+            velocity,
+            entity_id,
+            heading,
+            flags: 0,
+            health,
+            max_health,
+            generation: 0,
+            _reserved: [0; 4],
+        }
+    }
+
+    /// Extrapolates position along velocity vector for the given time step.
+    #[inline(always)]
+    pub fn step(&mut self, dt: Fixed64) {
+        self.position += self.velocity * dt;
+    }
+
+    /// Extrapolates position and velocity using 2nd-order acceleration over the time step.
+    #[inline(always)]
+    pub fn step_2nd_order(&mut self, acceleration: Vec3Fix, dt: Fixed64) {
+        let half_dt_sq = dt * dt * Fixed64::HALF;
+        self.position += (self.velocity * dt) + (acceleration * half_dt_sq);
+        self.velocity += acceleration * dt;
+    }
+}
+
+/// 8-lane SIMD-aligned contiguous Struct-of-Arrays chunk for 8 entities.
+///
+/// Contains parallel 8-element coordinate and kinematic arrays, each strictly aligned
+/// to 64 bytes to eliminate false sharing and maximize L1/L2 streaming bandwidth.
+#[repr(C, align(64))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlignedSoAChunk8 {
+    /// 8-lane X coordinates (64 bytes).
+    pub pos_x: [Fixed64; 8],
+    /// 8-lane Y coordinates (64 bytes).
+    pub pos_y: [Fixed64; 8],
+    /// 8-lane Z coordinates (64 bytes).
+    pub pos_z: [Fixed64; 8],
+    /// 8-lane X velocities (64 bytes).
+    pub vel_x: [Fixed64; 8],
+    /// 8-lane Y velocities (64 bytes).
+    pub vel_y: [Fixed64; 8],
+    /// 8-lane Z velocities (64 bytes).
+    pub vel_z: [Fixed64; 8],
+    /// 8-lane X accelerations (64 bytes).
+    pub accel_x: [Fixed64; 8],
+    /// 8-lane Y accelerations (64 bytes).
+    pub accel_y: [Fixed64; 8],
+    /// 8-lane Z accelerations (64 bytes).
+    pub accel_z: [Fixed64; 8],
+    /// 8-lane entity IDs (32 bytes).
+    pub ids: [u32; 8],
+    /// 8-lane headings (8 bytes).
+    pub headings: [u8; 8],
+    /// 8-lane flags (8 bytes).
+    pub flags: [u8; 8],
+    /// 8-lane health (16 bytes).
+    pub health: [u16; 8],
+    /// Active entity occupancy count (up to 8).
+    pub count: u8,
+    /// Active entity bitmask (bit i = 1 if slot i is active).
+    pub active_mask: u8,
+    /// Reserved padding ensuring 64-byte alignment of chunk control fields.
+    pub _reserved: [u8; 62],
+}
+
+// Compile-time assertions verifying 64-byte alignment and total block size.
+const _: () = assert!(core::mem::size_of::<AlignedSoAChunk8>() == 704);
+const _: () = assert!(core::mem::align_of::<AlignedSoAChunk8>() == 64);
+
+impl Default for AlignedSoAChunk8 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AlignedSoAChunk8 {
+    /// Constructs a new empty 8-lane aligned chunk.
+    pub fn new() -> Self {
+        Self {
+            pos_x: [Fixed64::ZERO; 8],
+            pos_y: [Fixed64::ZERO; 8],
+            pos_z: [Fixed64::ZERO; 8],
+            vel_x: [Fixed64::ZERO; 8],
+            vel_y: [Fixed64::ZERO; 8],
+            vel_z: [Fixed64::ZERO; 8],
+            accel_x: [Fixed64::ZERO; 8],
+            accel_y: [Fixed64::ZERO; 8],
+            accel_z: [Fixed64::ZERO; 8],
+            ids: [0; 8],
+            headings: [0; 8],
+            flags: [0; 8],
+            health: [0; 8],
+            count: 0,
+            active_mask: 0,
+            _reserved: [0; 62],
+        }
+    }
+
+    /// Returns the number of active entities in the chunk.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.count as usize
+    }
+
+    /// Returns true if no entities reside in the chunk.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// Returns true if all 8 slots are occupied.
+    #[inline]
+    pub fn is_full(&self) -> bool {
+        self.count == 8
+    }
+
+    /// Appends an entity to the first available slot in the chunk.
+    pub fn push(
+        &mut self,
+        id: u32,
+        pos: Vec3Fix,
+        vel: Vec3Fix,
+        heading: QuantizedYaw,
+        health: u16,
+    ) -> Result<usize, WorldError> {
+        if self.is_full() {
+            return Err(WorldError::ChunkCapacityExceeded);
+        }
+        let slot = self.count as usize;
+        self.pos_x[slot] = pos.x;
+        self.pos_y[slot] = pos.y;
+        self.pos_z[slot] = pos.z;
+        self.vel_x[slot] = vel.x;
+        self.vel_y[slot] = vel.y;
+        self.vel_z[slot] = vel.z;
+        self.accel_x[slot] = Fixed64::ZERO;
+        self.accel_y[slot] = Fixed64::ZERO;
+        self.accel_z[slot] = Fixed64::ZERO;
+        self.ids[slot] = id;
+        self.headings[slot] = heading.as_byte();
+        self.flags[slot] = 0;
+        self.health[slot] = health;
+        self.active_mask |= 1 << slot;
+        self.count += 1;
+        Ok(slot)
+    }
+
+    /// Appends an entity with explicit acceleration vector to the chunk.
+    pub fn push_with_accel(
+        &mut self,
+        id: u32,
+        pos: Vec3Fix,
+        vel: Vec3Fix,
+        accel: Vec3Fix,
+        heading: QuantizedYaw,
+        health: u16,
+    ) -> Result<usize, WorldError> {
+        if self.is_full() {
+            return Err(WorldError::ChunkCapacityExceeded);
+        }
+        let slot = self.count as usize;
+        self.pos_x[slot] = pos.x;
+        self.pos_y[slot] = pos.y;
+        self.pos_z[slot] = pos.z;
+        self.vel_x[slot] = vel.x;
+        self.vel_y[slot] = vel.y;
+        self.vel_z[slot] = vel.z;
+        self.accel_x[slot] = accel.x;
+        self.accel_y[slot] = accel.y;
+        self.accel_z[slot] = accel.z;
+        self.ids[slot] = id;
+        self.headings[slot] = heading.as_byte();
+        self.flags[slot] = 0;
+        self.health[slot] = health;
+        self.active_mask |= 1 << slot;
+        self.count += 1;
+        Ok(slot)
+    }
+
+    /// Removes an entity at the specified slot using O(1) swap-remove.
+    pub fn swap_remove(&mut self, slot: usize) -> Option<u32> {
+        if slot >= self.len() {
+            return None;
+        }
+        let last_slot = (self.count - 1) as usize;
+        let removed_id = self.ids[slot];
+
+        if slot < last_slot {
+            self.pos_x[slot] = self.pos_x[last_slot];
+            self.pos_y[slot] = self.pos_y[last_slot];
+            self.pos_z[slot] = self.pos_z[last_slot];
+            self.vel_x[slot] = self.vel_x[last_slot];
+            self.vel_y[slot] = self.vel_y[last_slot];
+            self.vel_z[slot] = self.vel_z[last_slot];
+            self.accel_x[slot] = self.accel_x[last_slot];
+            self.accel_y[slot] = self.accel_y[last_slot];
+            self.accel_z[slot] = self.accel_z[last_slot];
+            self.ids[slot] = self.ids[last_slot];
+            self.headings[slot] = self.headings[last_slot];
+            self.flags[slot] = self.flags[last_slot];
+            self.health[slot] = self.health[last_slot];
+        }
+
+        self.count -= 1;
+        self.active_mask &= !(1 << last_slot);
+        Some(removed_id)
+    }
+
+    /// Performs contiguous linear physics stepping for all active slots in the chunk.
+    #[inline]
+    pub fn step_kinematics(&mut self, dt: Fixed64) {
+        let n = self.count as usize;
+        for i in 0..n {
+            self.pos_x[i] += self.vel_x[i] * dt;
+            self.pos_y[i] += self.vel_y[i] * dt;
+            self.pos_z[i] += self.vel_z[i] * dt;
+        }
+    }
+
+    /// Performs 2nd-order quadratic kinematics for all active slots in the chunk.
+    #[inline]
+    pub fn step_kinematics_2nd_order(&mut self, dt: Fixed64) {
+        let half_dt_sq = dt * dt * Fixed64::HALF;
+        let n = self.count as usize;
+        for i in 0..n {
+            self.pos_x[i] += (self.vel_x[i] * dt) + (self.accel_x[i] * half_dt_sq);
+            self.pos_y[i] += (self.vel_y[i] * dt) + (self.accel_y[i] * half_dt_sq);
+            self.pos_z[i] += (self.vel_z[i] * dt) + (self.accel_z[i] * half_dt_sq);
+            self.vel_x[i] += self.accel_x[i] * dt;
+            self.vel_y[i] += self.accel_y[i] * dt;
+            self.vel_z[i] += self.accel_z[i] * dt;
+        }
+    }
+
+    /// Returns the entity components at the given slot if active.
+    pub fn get_entity(&self, slot: usize) -> Option<(u32, Vec3Fix, Vec3Fix, QuantizedYaw, u16)> {
+        if slot >= self.len() {
+            return None;
+        }
+        let id = self.ids[slot];
+        let pos = Vec3Fix::new(self.pos_x[slot], self.pos_y[slot], self.pos_z[slot]);
+        let vel = Vec3Fix::new(self.vel_x[slot], self.vel_y[slot], self.vel_z[slot]);
+        let yaw = QuantizedYaw::from_byte(self.headings[slot]);
+        let hp = self.health[slot];
+        Some((id, pos, vel, yaw, hp))
+    }
+}
+
+/// High-performance entity storage packing active entities into 64-byte cache-line aligned blocks.
+///
+/// Guarantees sequential L1 data cache prefetching with 0% false sharing during hot 20 Hz simulation loops.
+#[derive(Debug, Clone)]
+pub struct AlignedBlockStorage {
+    /// Contiguous dense array of 64-byte aligned blocks.
+    blocks: Vec<AlignedEntityBlock64>,
+    /// Sparse ID to dense array index mapping.
+    sparse_to_dense: Vec<u32>,
+    /// Decoupled cold entity metadata.
+    cold_data: Vec<ColdEntityMetadata>,
+}
+
+impl AlignedBlockStorage {
+    /// Constructs a new aligned block storage with pre-allocated capacity.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            blocks: Vec::with_capacity(capacity),
+            sparse_to_dense: Vec::new(),
+            cold_data: Vec::with_capacity(capacity),
+        }
+    }
+
+    /// Returns the number of active entities in storage.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.blocks.len()
+    }
+
+    /// Returns true if no entities are currently stored.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.blocks.is_empty()
+    }
+
+    /// Returns allocated block capacity.
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.blocks.capacity()
+    }
+
+    /// Spawns a new entity as an aligned 64-byte block.
+    pub fn spawn(
+        &mut self,
+        block: AlignedEntityBlock64,
+        cold: ColdEntityMetadata,
+    ) -> Result<usize, WorldError> {
+        let id_idx = block.entity_id as usize;
+        if id_idx < self.sparse_to_dense.len() && self.sparse_to_dense[id_idx] != SPARSE_SENTINEL {
+            return Err(WorldError::EntityAlreadyExists(block.entity_id));
+        }
+
+        if id_idx >= self.sparse_to_dense.len() {
+            self.sparse_to_dense.resize(id_idx + 1, SPARSE_SENTINEL);
+        }
+
+        let dense_idx = self.blocks.len();
+        self.blocks.push(block);
+        self.cold_data.push(cold);
+        self.sparse_to_dense[id_idx] = dense_idx as u32;
+
+        Ok(dense_idx)
+    }
+
+    /// Despawns an entity in O(1) time via swap-remove.
+    pub fn despawn(&mut self, id: u32) -> Result<ColdEntityMetadata, WorldError> {
+        let id_idx = id as usize;
+        let dense_idx = if id_idx < self.sparse_to_dense.len() {
+            let idx = self.sparse_to_dense[id_idx];
+            if idx == SPARSE_SENTINEL {
+                return Err(WorldError::EntityNotFound(id));
+            }
+            idx as usize
+        } else {
+            return Err(WorldError::EntityNotFound(id));
+        };
+
+        let last_idx = self.blocks.len().saturating_sub(1);
+        let _removed_block = self.blocks.swap_remove(dense_idx);
+        let removed_cold = self.cold_data.swap_remove(dense_idx);
+
+        self.sparse_to_dense[id as usize] = SPARSE_SENTINEL;
+
+        if dense_idx < last_idx {
+            let swapped_id = self.blocks[dense_idx].entity_id as usize;
+            self.sparse_to_dense[swapped_id] = dense_idx as u32;
+        }
+
+        Ok(removed_cold)
+    }
+
+    /// Returns a reference to an entity's 64-byte block.
+    #[inline]
+    pub fn get_block(&self, id: u32) -> Option<&AlignedEntityBlock64> {
+        let id_idx = id as usize;
+        if id_idx < self.sparse_to_dense.len() {
+            let dense_idx = self.sparse_to_dense[id_idx];
+            if dense_idx != SPARSE_SENTINEL {
+                return self.blocks.get(dense_idx as usize);
+            }
+        }
+        None
+    }
+
+    /// Returns a mutable reference to an entity's 64-byte block.
+    #[inline]
+    pub fn get_block_mut(&mut self, id: u32) -> Option<&mut AlignedEntityBlock64> {
+        let id_idx = id as usize;
+        if id_idx < self.sparse_to_dense.len() {
+            let dense_idx = self.sparse_to_dense[id_idx];
+            if dense_idx != SPARSE_SENTINEL {
+                return self.blocks.get_mut(dense_idx as usize);
+            }
+        }
+        None
+    }
+
+    /// Returns an immutable slice of all aligned entity blocks.
+    #[inline]
+    pub fn blocks(&self) -> &[AlignedEntityBlock64] {
+        &self.blocks
+    }
+
+    /// Returns a mutable slice of all aligned entity blocks.
+    #[inline]
+    pub fn blocks_mut(&mut self) -> &mut [AlignedEntityBlock64] {
+        &mut self.blocks
+    }
+
+    /// Performs contiguous linear physics extrapolation across all active blocks.
+    ///
+    /// Iterates sequentially over 64-byte aligned blocks, loading each cache line cleanly.
+    pub fn step_kinematics(&mut self, dt: Fixed64) {
+        for block in &mut self.blocks {
+            block.step(dt);
+        }
+    }
+
+    /// Performs 2nd-order kinematic stepping given a parallel slice of accelerations.
+    pub fn step_kinematics_2nd_order(&mut self, accelerations: &[Vec3Fix], dt: Fixed64) {
+        let count = self.blocks.len().min(accelerations.len());
+        for (i, &accel) in accelerations.iter().enumerate().take(count) {
+            self.blocks[i].step_2nd_order(accel, dt);
+        }
+    }
+
+    /// Converts this aligned block storage into standard SoaEntityStorage.
+    pub fn to_soa_storage(&self) -> SoaEntityStorage {
+        let mut soa = SoaEntityStorage::with_capacity(self.blocks.len());
+        for (i, block) in self.blocks.iter().enumerate() {
+            let cold = self.cold_data.get(i).cloned().unwrap_or_default();
+            let params = EntitySpawnParams {
+                id: block.entity_id,
+                position: block.position,
+                velocity: block.velocity,
+                acceleration: Vec3Fix::ZERO,
+                heading: block.heading,
+                flags: block.flags,
+                health: block.health as u32,
+                max_health: block.max_health as u32,
+                cold,
+            };
+            let _ = soa.spawn(params);
+        }
+        soa
+    }
+
+    /// Constructs aligned block storage from existing SoaEntityStorage.
+    pub fn from_soa_storage(storage: &SoaEntityStorage) -> Self {
+        let count = storage.len();
+        let mut aligned = Self::with_capacity(count);
+        let (ids, positions, velocities, headings, flags) = storage.components();
+        for i in 0..count {
+            let id = ids[i];
+            let cold = storage.get_cold_data(id).cloned().unwrap_or_default();
+            let (hp, mhp) = storage.get_health(id).unwrap_or((100, 100));
+            let block = AlignedEntityBlock64 {
+                position: positions[i],
+                velocity: velocities[i],
+                entity_id: id,
+                heading: headings[i],
+                flags: flags[i],
+                health: hp.min(u16::MAX as u32) as u16,
+                max_health: mhp.min(u16::MAX as u32) as u16,
+                generation: 0,
+                _reserved: [0; 4],
+            };
+            let _ = aligned.spawn(block, cold);
+        }
+        aligned
     }
 }
 
@@ -766,5 +1315,140 @@ mod tests {
         assert_eq!(positions[0], p1);
         assert_eq!(velocities[0], v1);
         assert_eq!(accelerations[0], a1);
+    }
+
+    #[test]
+    fn test_aligned_entity_block_64_layout_and_stepping() {
+        assert_eq!(core::mem::size_of::<AlignedEntityBlock64>(), 64);
+        assert_eq!(core::mem::align_of::<AlignedEntityBlock64>(), 64);
+
+        let pos = Vec3Fix::from_f64(10.0, 5.0, -20.0);
+        let vel = Vec3Fix::from_f64(2.0, 0.0, 4.0);
+        let heading = QuantizedYaw::from_degrees(180.0);
+        let mut block = AlignedEntityBlock64::with_health(42, pos, vel, heading, 80, 100);
+
+        assert_eq!(block.entity_id, 42);
+        assert_eq!(block.health, 80);
+        assert_eq!(block.max_health, 100);
+
+        // Linear step dt = 0.05s
+        let dt = Fixed64::from_f64(0.05);
+        block.step(dt);
+        assert!((block.position.x.to_f64() - 10.1).abs() < 1e-4);
+        assert!((block.position.z.to_f64() - (-19.8)).abs() < 1e-4);
+
+        // 2nd-order step with accel = (1.0, 0.0, 0.0)
+        let accel = Vec3Fix::from_f64(1.0, 0.0, 0.0);
+        block.step_2nd_order(accel, dt);
+        // pos.x was 10.1, vel.x was 2.0. displacement = 2.0 * 0.05 + 0.5 * 1.0 * 0.0025 = 0.10125
+        assert!((block.position.x.to_f64() - (10.1 + 0.10125)).abs() < 1e-4);
+        assert!((block.velocity.x.to_f64() - (2.0 + 0.05)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_aligned_soa_chunk_8_simd_layout_and_stepping() {
+        assert_eq!(core::mem::size_of::<AlignedSoAChunk8>(), 704);
+        assert_eq!(core::mem::align_of::<AlignedSoAChunk8>(), 64);
+
+        let mut chunk = AlignedSoAChunk8::new();
+        assert!(chunk.is_empty());
+        assert_eq!(chunk.len(), 0);
+
+        // Fill all 8 slots
+        for i in 0..8 {
+            let id = 100 + i as u32;
+            let pos = Vec3Fix::from_f64(i as f64 * 10.0, 0.0, 0.0);
+            let vel = Vec3Fix::from_f64(1.0, 0.0, 0.0);
+            let yaw = QuantizedYaw::from_degrees(i as f64 * 45.0);
+            let slot = chunk.push(id, pos, vel, yaw, 100).expect("push slot");
+            assert_eq!(slot, i);
+        }
+        assert!(chunk.is_full());
+        assert_eq!(chunk.len(), 8);
+
+        // Attempt pushing beyond capacity
+        assert!(chunk
+            .push(
+                999,
+                Vec3Fix::ZERO,
+                Vec3Fix::ZERO,
+                QuantizedYaw::from_byte(0),
+                100
+            )
+            .is_err());
+
+        // Step kinematics
+        let dt = Fixed64::from_f64(0.05);
+        chunk.step_kinematics(dt);
+
+        for i in 0..8 {
+            let (id, pos, vel, _, hp) = chunk.get_entity(i).expect("get entity");
+            assert_eq!(id, 100 + i as u32);
+            assert_eq!(hp, 100);
+            assert_eq!(vel.x.to_f64(), 1.0);
+            assert!((pos.x.to_f64() - (i as f64 * 10.0 + 0.05)).abs() < 1e-4);
+        }
+
+        // Swap remove middle entity (slot 3)
+        let removed = chunk.swap_remove(3);
+        assert_eq!(removed, Some(103));
+        assert_eq!(chunk.len(), 7);
+        // Last entity (107) should now be in slot 3
+        let (swapped_id, _, _, _, _) = chunk.get_entity(3).expect("swapped entity");
+        assert_eq!(swapped_id, 107);
+    }
+
+    #[test]
+    fn test_aligned_block_storage_lifecycle_and_parity() {
+        let mut storage = AlignedBlockStorage::with_capacity(32);
+        assert!(storage.is_empty());
+
+        for i in 1..=20 {
+            let id = i as u32;
+            let pos = Vec3Fix::from_f64(i as f64 * 5.0, 1.0, i as f64 * -2.0);
+            let vel = Vec3Fix::from_f64(0.5, 0.0, 1.0);
+            let heading = QuantizedYaw::from_degrees((i * 15) as f64);
+            let block = AlignedEntityBlock64::with_health(id, pos, vel, heading, 90, 100);
+            storage
+                .spawn(block, ColdEntityMetadata::default())
+                .expect("spawn");
+        }
+        assert_eq!(storage.len(), 20);
+
+        let dt = Fixed64::from_f64(0.05);
+        storage.step_kinematics(dt);
+
+        // Convert to SoaEntityStorage and assert parity
+        let mut soa = storage.to_soa_storage();
+        assert_eq!(soa.len(), 20);
+
+        for i in 1..=20 {
+            let id = i as u32;
+            let block = storage.get_block(id).expect("aligned block");
+            let (pos, vel, yaw) = soa.get_transform(id).expect("soa transform");
+            assert_eq!(block.position, pos);
+            assert_eq!(block.velocity, vel);
+            assert_eq!(block.heading, yaw);
+        }
+
+        // Step SoaEntityStorage scalar and update back
+        soa.step_kinematics_scalar(dt);
+        let blocks = soa.to_aligned_blocks();
+        assert_eq!(blocks.len(), 20);
+
+        let roundtrip = AlignedBlockStorage::from_soa_storage(&soa);
+        assert_eq!(roundtrip.len(), 20);
+        for i in 1..=20 {
+            let id = i as u32;
+            let blk = roundtrip.get_block(id).expect("roundtrip block");
+            let (pos, _, _) = soa.get_transform(id).expect("soa transform");
+            assert_eq!(blk.position, pos);
+        }
+
+        // Despawn check
+        let removed_cold = storage.despawn(10).expect("despawn 10");
+        assert_eq!(removed_cold.name, "");
+        assert_eq!(storage.len(), 19);
+        assert!(storage.get_block(10).is_none());
     }
 }

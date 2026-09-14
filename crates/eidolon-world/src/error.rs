@@ -133,6 +133,8 @@ pub enum WorldError {
     PreAuthExpired,
     /// Predictive migration pre-authorization token is invalid or already consumed.
     PreAuthInvalid,
+    /// 8-lane SIMD chunk capacity reached.
+    ChunkCapacityExceeded,
 }
 
 impl fmt::Display for WorldError {
@@ -228,6 +230,7 @@ impl fmt::Display for WorldError {
                 f,
                 "Predictive migration pre-authorization token is invalid or consumed"
             ),
+            Self::ChunkCapacityExceeded => write!(f, "Aligned 8-lane chunk capacity reached"),
         }
     }
 }

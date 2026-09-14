@@ -179,6 +179,43 @@ impl<const CAPACITY: usize> IoUringRingBuffer<CAPACITY> {
         Ok(idx)
     }
 
+    /// Submits a datagram send request using direct zero-copy closure serialization.
+    ///
+    /// Writes directly into the pre-allocated ring buffer slot, eliminating any intermediate
+    /// heap allocations or staging copies before transmission.
+    pub fn submit_direct_send<F>(
+        &mut self,
+        user_data: u64,
+        serializer: F,
+    ) -> Result<(usize, usize), IoUringError>
+    where
+        F: FnOnce(&mut [u8; PACKET_BUFFER_SIZE]) -> Result<usize, IoUringError>,
+    {
+        let tail = self.sq_tail.load(Ordering::Relaxed);
+        let head = self.sq_head.load(Ordering::Acquire);
+
+        if tail.wrapping_sub(head) >= CAPACITY {
+            return Err(IoUringError::SubmissionQueueFull);
+        }
+
+        let idx = tail % CAPACITY;
+        let written = serializer(&mut self.buffers[idx])?;
+        if written > PACKET_BUFFER_SIZE {
+            return Err(IoUringError::PacketTooLarge(written));
+        }
+
+        self.sq[idx] = IoUringSqEntry {
+            opcode: IORING_OP_SENDMSG,
+            flags: 0,
+            user_data,
+            buffer_idx: idx as u32,
+            len: written as u32,
+        };
+
+        self.sq_tail.store(tail.wrapping_add(1), Ordering::Release);
+        Ok((idx, written))
+    }
+
     /// Completes an in-flight submission entry and writes into the completion queue.
     pub fn complete(
         &mut self,
@@ -320,6 +357,20 @@ impl IoUringDriver {
         completed
     }
 
+    /// Submits a direct zero-copy send operation into the driver's ring buffer.
+    pub fn submit_direct_send<F>(
+        &mut self,
+        user_data: u64,
+        serializer: F,
+    ) -> Result<(usize, usize), IoUringError>
+    where
+        F: FnOnce(&mut [u8; PACKET_BUFFER_SIZE]) -> Result<usize, IoUringError>,
+    {
+        let res = self.rings.submit_direct_send(user_data, serializer)?;
+        self.total_submissions += 1;
+        Ok(res)
+    }
+
     /// Polls completed I/O operations into destination slice.
     pub fn poll_completions(&mut self, out: &mut [IoUringCqEntry]) -> usize {
         self.rings.poll_completions(out)
@@ -341,6 +392,153 @@ impl IoUringDriver {
 impl Default for IoUringDriver {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// 64-byte hardware cache-line aligned packet datagram buffer.
+///
+/// Guarantees that packet payload writes and DMA transfers start on a 64-byte boundary,
+/// eliminating split cache-line stalls and false sharing in high-throughput network threads.
+#[repr(C, align(64))]
+#[derive(Clone, Copy, Debug)]
+pub struct AlignedPacketBuffer<const SIZE: usize = PACKET_BUFFER_SIZE>(pub [u8; SIZE]);
+
+// Compile-time assertion verifying 64-byte cache line alignment.
+const _: () = assert!(core::mem::align_of::<AlignedPacketBuffer>() == 64);
+
+impl<const SIZE: usize> Default for AlignedPacketBuffer<SIZE> {
+    fn default() -> Self {
+        Self([0u8; SIZE])
+    }
+}
+
+impl AlignedPacketBuffer<PACKET_BUFFER_SIZE> {
+    /// Constructs a new zeroed standard MTU-sized 64-byte aligned buffer.
+    pub const fn new() -> Self {
+        Self([0u8; PACKET_BUFFER_SIZE])
+    }
+}
+
+impl<const SIZE: usize> AlignedPacketBuffer<SIZE> {
+    /// Constructs a new zeroed 64-byte aligned buffer with custom size.
+    pub const fn with_size() -> Self {
+        Self([0u8; SIZE])
+    }
+
+    /// Returns a slice of the underlying buffer.
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Returns a mutable slice of the underlying buffer.
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+
+    /// Returns the capacity in bytes.
+    #[inline]
+    pub const fn len(&self) -> usize {
+        SIZE
+    }
+
+    /// Returns true if capacity is zero.
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        SIZE == 0
+    }
+}
+
+/// Pre-allocated pool of 64-byte aligned buffers registered with io_uring / DMA.
+///
+/// Replicates Linux IORING_REGISTER_BUFFERS kernel interface in pure safe Rust,
+/// enabling zero-copy serialization directly into pre-pinned DMA memory pages.
+#[derive(Debug)]
+pub struct DmaRegisteredBufferPool<
+    const CAPACITY: usize,
+    const BUF_SIZE: usize = PACKET_BUFFER_SIZE,
+> {
+    buffers: Vec<AlignedPacketBuffer<BUF_SIZE>>,
+    free_list: Vec<u32>,
+    is_registered: bool,
+}
+
+impl<const CAPACITY: usize, const BUF_SIZE: usize> Default
+    for DmaRegisteredBufferPool<CAPACITY, BUF_SIZE>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const CAPACITY: usize, const BUF_SIZE: usize> DmaRegisteredBufferPool<CAPACITY, BUF_SIZE> {
+    /// Constructs a new pool of pre-allocated aligned packet buffers.
+    pub fn new() -> Self {
+        let mut buffers = Vec::with_capacity(CAPACITY);
+        let mut free_list = Vec::with_capacity(CAPACITY);
+        for i in 0..CAPACITY {
+            buffers.push(AlignedPacketBuffer::with_size());
+            free_list.push((CAPACITY - 1 - i) as u32);
+        }
+        Self {
+            buffers,
+            free_list,
+            is_registered: false,
+        }
+    }
+
+    /// Simulates registering buffers with the kernel via IORING_REGISTER_BUFFERS.
+    pub fn register(&mut self) {
+        self.is_registered = true;
+    }
+
+    /// Returns true if buffers have been registered with the kernel.
+    pub fn is_registered(&self) -> bool {
+        self.is_registered
+    }
+
+    /// Acquires a free buffer index from the registered pool.
+    pub fn acquire(&mut self) -> Option<usize> {
+        self.free_list.pop().map(|idx| idx as usize)
+    }
+
+    /// Releases a buffer index back to the pool.
+    pub fn release(&mut self, idx: usize) {
+        if idx < CAPACITY {
+            self.free_list.push(idx as u32);
+        }
+    }
+
+    /// Returns the number of available free buffers.
+    pub fn available(&self) -> usize {
+        self.free_list.len()
+    }
+
+    /// Serializes data directly into an acquired buffer using a zero-copy closure.
+    pub fn write_direct<F>(&mut self, idx: usize, serializer: F) -> Result<usize, IoUringError>
+    where
+        F: FnOnce(&mut [u8]) -> Result<usize, IoUringError>,
+    {
+        if idx >= CAPACITY {
+            return Err(IoUringError::InvalidConfiguration);
+        }
+        let buf = self.buffers[idx].as_mut_slice();
+        let written = serializer(buf)?;
+        if written > BUF_SIZE {
+            return Err(IoUringError::PacketTooLarge(written));
+        }
+        Ok(written)
+    }
+
+    /// Returns an immutable reference to the buffer at the given index.
+    pub fn get(&self, idx: usize) -> Option<&AlignedPacketBuffer<BUF_SIZE>> {
+        self.buffers.get(idx)
+    }
+
+    /// Returns a mutable reference to the buffer at the given index.
+    pub fn get_mut(&mut self, idx: usize) -> Option<&mut AlignedPacketBuffer<BUF_SIZE>> {
+        self.buffers.get_mut(idx)
     }
 }
 
@@ -383,5 +581,62 @@ mod tests {
             ring.submit_recv(100),
             Err(IoUringError::SubmissionQueueFull)
         );
+    }
+
+    #[test]
+    fn test_aligned_packet_buffer_alignment() {
+        assert_eq!(core::mem::align_of::<AlignedPacketBuffer>(), 64);
+        assert_eq!(core::mem::size_of::<AlignedPacketBuffer>(), 1536);
+
+        let mut buf = AlignedPacketBuffer::<PACKET_BUFFER_SIZE>::new();
+        assert_eq!(buf.len(), PACKET_BUFFER_SIZE);
+        assert!(!buf.is_empty());
+
+        buf.as_mut_slice()[0..4].copy_from_slice(b"TEST");
+        assert_eq!(&buf.as_slice()[0..4], b"TEST");
+    }
+
+    #[test]
+    fn test_dma_registered_buffer_pool() {
+        let mut pool = DmaRegisteredBufferPool::<8, 1500>::new();
+        assert_eq!(pool.available(), 8);
+        assert!(!pool.is_registered());
+
+        pool.register();
+        assert!(pool.is_registered());
+
+        let idx = pool.acquire().expect("acquire free buffer");
+        assert_eq!(pool.available(), 7);
+
+        let written = pool
+            .write_direct(idx, |buf| {
+                buf[0..9].copy_from_slice(b"DIRECTDMA");
+                Ok(9)
+            })
+            .expect("direct write");
+        assert_eq!(written, 9);
+
+        let buf = pool.get(idx).expect("get buffer");
+        assert_eq!(&buf.as_slice()[0..9], b"DIRECTDMA");
+
+        pool.release(idx);
+        assert_eq!(pool.available(), 8);
+    }
+
+    #[test]
+    fn test_submit_direct_send() {
+        let mut ring = IoUringRingBuffer::<8>::new();
+        let payload = b"DIRECT_ZERO_COPY_PAYLOAD";
+
+        let (idx, written) = ring
+            .submit_direct_send(1234, |buf| {
+                buf[..payload.len()].copy_from_slice(payload);
+                Ok(payload.len())
+            })
+            .expect("submit direct send");
+
+        assert_eq!(written, payload.len());
+        let buf = ring.get_buffer(idx).expect("get buffer");
+        assert_eq!(&buf[..payload.len()], payload);
     }
 }
