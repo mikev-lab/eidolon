@@ -8,6 +8,7 @@
 
 pub mod authority;
 pub mod behavior_tree;
+pub mod delta;
 pub mod event_bus;
 pub mod fixed;
 pub mod geom;
@@ -29,6 +30,7 @@ pub mod vehicle;
 
 pub use authority::{AuthorityError, AuthorityFencer, AuthorityToken, AUTHORITY_TOKEN_LEN};
 pub use behavior_tree::{BehaviorTree, BtNode, BtNodeType, BtStatus};
+pub use delta::{DeltaTier, DeltaTransform};
 pub use event_bus::{
     EventBus, EventCallback, EventContext, EventSubscriber, GameEvent, EVENT_QUEUE_CAPACITY,
     MAX_SUBSCRIBERS,

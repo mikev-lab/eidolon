@@ -3,6 +3,9 @@
 //! Provides zero-copy, zero-heap-allocation bit-level serialization and deserialization
 //! with safe bounds checks, variable-length integer (varint) encodings, and byte alignment.
 
+use eidolon_core::delta::{DeltaTier, DeltaTransform};
+use eidolon_core::quant::{QuantizedCellCoord, QuantizedYaw};
+
 use crate::error::BitstreamError;
 
 /// Bounded bitstream writer operating directly on caller-provided byte slices.
@@ -275,6 +278,40 @@ impl<'a> BitWriter<'a> {
         }
         Ok(())
     }
+
+    /// Writes an adaptive variable-bit delta transform update into the bitstream.
+    pub fn write_delta_transform(&mut self, delta: &DeltaTransform) -> Result<(), BitstreamError> {
+        match *delta {
+            DeltaTransform::Stationary => self.write_bits(DeltaTier::Stationary.tag() as u64, 2),
+            DeltaTransform::Small { dx, dz, dy, dyaw } => {
+                self.write_bits(DeltaTier::Small.tag() as u64, 2)?;
+                let u_dx = (dx + 8) as u64 & 0x0F;
+                let u_dz = (dz + 8) as u64 & 0x0F;
+                let u_dy = (dy + 4) as u64 & 0x07;
+                let u_dyaw = (dyaw + 4) as u64 & 0x07;
+                self.write_bits(u_dx, 4)?;
+                self.write_bits(u_dz, 4)?;
+                self.write_bits(u_dy, 3)?;
+                self.write_bits(u_dyaw, 3)
+            }
+            DeltaTransform::Medium { dx, dz, dy, yaw } => {
+                self.write_bits(DeltaTier::Medium.tag() as u64, 2)?;
+                let u_dx = dx as u8 as u64;
+                let u_dz = dz as u8 as u64;
+                let u_dy = (dy + 32) as u64 & 0x3F;
+                let u_yaw = yaw.as_byte() as u64;
+                self.write_bits(u_dy, 6)?;
+                self.write_bits(u_dx, 8)?;
+                self.write_bits(u_dz, 8)?;
+                self.write_bits(u_yaw, 8)
+            }
+            DeltaTransform::Full { coord, yaw, flags } => {
+                self.write_bits(DeltaTier::Full.tag() as u64, 2)?;
+                let full_7b = coord.pack_with_yaw_and_flags(yaw, flags);
+                self.write_bytes(&full_7b)
+            }
+        }
+    }
 }
 
 /// Bounded bitstream reader operating directly on caller-provided immutable byte slices.
@@ -498,10 +535,49 @@ impl<'a> BitReader<'a> {
             }
         }
 
-        for slot in out.iter_mut() {
-            *slot = self.read_u8()?;
+        for b in out.iter_mut() {
+            *b = self.read_u8()?;
         }
         Ok(())
+    }
+
+    /// Reads an adaptive variable-bit delta transform update from the bitstream.
+    pub fn read_delta_transform(&mut self) -> Result<DeltaTransform, BitstreamError> {
+        let tag = self.read_bits(2)? as u8;
+        let tier = DeltaTier::from_tag(tag);
+        match tier {
+            DeltaTier::Stationary => Ok(DeltaTransform::Stationary),
+            DeltaTier::Small => {
+                let u_dx = self.read_bits(4)? as i8;
+                let u_dz = self.read_bits(4)? as i8;
+                let u_dy = self.read_bits(3)? as i8;
+                let u_dyaw = self.read_bits(3)? as i8;
+                Ok(DeltaTransform::Small {
+                    dx: u_dx - 8,
+                    dz: u_dz - 8,
+                    dy: u_dy - 4,
+                    dyaw: u_dyaw - 4,
+                })
+            }
+            DeltaTier::Medium => {
+                let u_dy = self.read_bits(6)? as i8;
+                let dx = self.read_bits(8)? as u8 as i8;
+                let dz = self.read_bits(8)? as u8 as i8;
+                let yaw_byte = self.read_bits(8)? as u8;
+                Ok(DeltaTransform::Medium {
+                    dx,
+                    dz,
+                    dy: u_dy - 32,
+                    yaw: QuantizedYaw::from_byte(yaw_byte),
+                })
+            }
+            DeltaTier::Full => {
+                let mut buf_7b = [0u8; 7];
+                self.read_bytes(&mut buf_7b)?;
+                let (coord, yaw, flags) = QuantizedCellCoord::unpack_with_yaw_and_flags(buf_7b);
+                Ok(DeltaTransform::Full { coord, yaw, flags })
+            }
+        }
     }
 
     /// Aligns read cursor to the next byte boundary.
@@ -598,5 +674,45 @@ mod tests {
         let result = reader.read_varint();
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), BitstreamError::InvalidVarint);
+    }
+
+    #[test]
+    fn test_delta_transform_bitstream_roundtrip() {
+        let base_coord = QuantizedCellCoord::new(2000, 400, 3000);
+        let base_yaw = QuantizedYaw::from_degrees(90.0);
+
+        let deltas = [
+            DeltaTransform::Stationary,
+            DeltaTransform::Small {
+                dx: 3,
+                dz: -2,
+                dy: 1,
+                dyaw: -1,
+            },
+            DeltaTransform::Medium {
+                dx: -45,
+                dz: 60,
+                dy: -10,
+                yaw: QuantizedYaw::from_degrees(180.0),
+            },
+            DeltaTransform::Full {
+                coord: base_coord,
+                yaw: base_yaw,
+                flags: 0x05,
+            },
+        ];
+
+        let mut buf = [0u8; 64];
+        let mut writer = BitWriter::new(&mut buf);
+
+        for delta in &deltas {
+            writer.write_delta_transform(delta).expect("write delta");
+        }
+
+        let mut reader = BitReader::new(writer.as_bytes());
+        for delta in &deltas {
+            let decoded = reader.read_delta_transform().expect("read delta");
+            assert_eq!(*delta, decoded);
+        }
     }
 }
