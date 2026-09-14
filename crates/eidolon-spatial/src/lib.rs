@@ -423,4 +423,82 @@ mod tests {
         batched8x_sorted.sort_unstable();
         assert_eq!(scalar_sorted, batched8x_sorted);
     }
+
+    #[test]
+    fn test_query_radius_16wide_simd_parity() {
+        let mut grid = SpatialHashGrid::with_capacity(120, 64);
+        let center = Vec3Fix::from_f64(50.0, 15.0, 50.0);
+
+        for id in 1..=60 {
+            let angle = (id as f64) * 0.3;
+            let dist = (id as f64) * 1.2;
+            let pos = Vec3Fix::from_f64(
+                50.0 + dist * angle.cos(),
+                15.0 + (id as f64 % 5.0),
+                50.0 + dist * angle.sin(),
+            );
+            assert!(grid.insert(id, pos).is_ok());
+        }
+
+        let radius_sq = Fixed64::from_i32(900); // 30m radius
+
+        let mut scalar_buf = [0u32; 64];
+        let mut batched16x_buf = [0u32; 64];
+
+        let scalar_res = grid.query_radius_squared(center, radius_sq, &mut scalar_buf);
+        let batched16x_res =
+            grid.query_radius_squared_batched_16x(center, radius_sq, &mut batched16x_buf);
+
+        assert_eq!(scalar_res.written, batched16x_res.written);
+        assert_eq!(scalar_res.total_matches, batched16x_res.total_matches);
+
+        let mut scalar_sorted = scalar_buf[..scalar_res.written].to_vec();
+        let mut batched16x_sorted = batched16x_buf[..batched16x_res.written].to_vec();
+        scalar_sorted.sort_unstable();
+        batched16x_sorted.sort_unstable();
+        assert_eq!(
+            scalar_sorted, batched16x_sorted,
+            "16-wide SIMD query results must match scalar query"
+        );
+    }
+
+    #[test]
+    fn test_query_vision_cone_16wide_culling() {
+        let mut grid = SpatialHashGrid::with_capacity(30, 64);
+        let observer = Vec3Fix::ZERO;
+        let forward = Vec3Fix::new(Fixed64::ZERO, Fixed64::ZERO, Fixed64::ONE);
+        let cos_half_sq = Fixed64::from_f64(0.5); // 90 degree FoV (half-angle 45 deg)
+        let max_range_sq = Fixed64::from_i32(2500); // 50m max viewing distance
+        let personal_space_sq = Fixed64::from_i32(1); // 1m personal space
+
+        // Entity 1: Directly ahead at 20m (inside cone)
+        assert!(grid.insert(1, Vec3Fix::from_f64(0.0, 0.0, 20.0)).is_ok());
+        // Entity 2: Forward-right at (10, 0, 20), ~26.5 deg angle (inside cone)
+        assert!(grid.insert(2, Vec3Fix::from_f64(10.0, 0.0, 20.0)).is_ok());
+        // Entity 3: Directly behind at -10m (outside cone, dot < 0)
+        assert!(grid.insert(3, Vec3Fix::from_f64(0.0, 0.0, -10.0)).is_ok());
+        // Entity 4: Wide flank at (40, 0, 10), ~76 deg angle (outside cone)
+        assert!(grid.insert(4, Vec3Fix::from_f64(40.0, 0.0, 10.0)).is_ok());
+        // Entity 5: Ahead at 60m (outside max range 50m)
+        assert!(grid.insert(5, Vec3Fix::from_f64(0.0, 0.0, 60.0)).is_ok());
+
+        let mut output = [0u32; 16];
+        let res = grid.query_vision_cone_batched_16x(
+            observer,
+            forward,
+            cos_half_sq,
+            max_range_sq,
+            personal_space_sq,
+            &mut output,
+        );
+
+        assert_eq!(res.written, 2);
+        assert_eq!(res.total_matches, 2);
+        let matched = &output[..res.written];
+        assert!(matched.contains(&1));
+        assert!(matched.contains(&2));
+        assert!(!matched.contains(&3));
+        assert!(!matched.contains(&4));
+        assert!(!matched.contains(&5));
+    }
 }

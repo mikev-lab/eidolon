@@ -6,7 +6,7 @@
 use core::fmt;
 use eidolon_core::fixed::{Fixed64, Vec3Fix};
 use eidolon_core::morton::morton_encode_vec3;
-use eidolon_core::simd::Vec3Fix8x;
+use eidolon_core::simd::{Vec3Fix16x, Vec3Fix8x};
 
 /// Horizontal spatial cell size in meters (64 meters).
 pub const CELL_HORIZONTAL_SIZE: i32 = 64;
@@ -579,6 +579,225 @@ impl SpatialHashGrid {
             batch_positions[batch_len..8].fill(center);
             let v8 = Vec3Fix8x::from_slice_8(&batch_positions);
             let mask = v8.filter_within_radius(center, radius_sq);
+            for (i, &cand) in batch_candidates.iter().enumerate().take(batch_len) {
+                if (mask & (1 << i)) != 0 {
+                    if matched_count < output_buffer.len() {
+                        output_buffer[matched_count] = cand;
+                    }
+                    matched_count += 1;
+                }
+            }
+        }
+
+        SpatialQueryResult::new(matched_count.min(output_buffer.len()), matched_count)
+    }
+
+    /// Queries active entities within a squared radius of the center point using 16-wide SIMD batching.
+    ///
+    /// Batches candidate entity position checks into 16-lane parallel SIMD evaluation via `Vec3Fix16x::filter_within_radius`,
+    /// computing 16 distance checks and radius filter conditions simultaneously in hardware vector registers.
+    /// Matches are written directly into `output_buffer` without heap allocation.
+    pub fn query_radius_squared_batched_16x(
+        &self,
+        center: Vec3Fix,
+        radius_sq: Fixed64,
+        output_buffer: &mut [u32],
+    ) -> SpatialQueryResult {
+        let center_cell = CellCoord::from_position(center);
+        let mut matched_count = 0;
+
+        // Fast pre-calculated discrete cell bounding boxes for common radius thresholds
+        let (max_dx, max_dy) = if radius_sq <= Fixed64::from_i32(4096) {
+            (
+                1,
+                if radius_sq <= Fixed64::from_i32(1024) {
+                    1
+                } else {
+                    2
+                },
+            )
+        } else if radius_sq <= Fixed64::from_i32(16384) {
+            (2, 4)
+        } else {
+            let r_fixed = radius_sq.sqrt();
+            let dx = (r_fixed.saturating_div(Fixed64::from_i32(CELL_HORIZONTAL_SIZE)))
+                .ceil()
+                .to_i32()
+                .max(1);
+            let dy = (r_fixed.saturating_div(Fixed64::from_i32(CELL_VERTICAL_SIZE)))
+                .ceil()
+                .to_i32()
+                .max(1);
+            (dx, dy)
+        };
+        let max_dz = max_dx;
+
+        let mut batch_candidates = [0u32; 16];
+        let mut batch_positions = [Vec3Fix::ZERO; 16];
+        let mut batch_len = 0;
+
+        // Cell neighborhood iteration around observer
+        for dx in -max_dx..=max_dx {
+            for dz in -max_dz..=max_dz {
+                for dy in -max_dy..=max_dy {
+                    let neighbor_cell =
+                        CellCoord::new(center_cell.x + dx, center_cell.y + dy, center_cell.z + dz);
+                    let key = neighbor_cell.spatial_key();
+                    let bucket = (key as usize) & self.bucket_mask;
+
+                    let mut curr = self.bucket_heads[bucket];
+                    if curr == TERMINAL_INDEX {
+                        continue;
+                    }
+                    while curr != TERMINAL_INDEX {
+                        let curr_idx = curr as usize;
+                        if self.entity_keys[curr_idx] == key && self.active_mask[curr_idx] {
+                            batch_candidates[batch_len] = curr;
+                            batch_positions[batch_len] = self.positions[curr_idx];
+                            batch_len += 1;
+
+                            if batch_len == 16 {
+                                let v16 = Vec3Fix16x::from_slice_16(&batch_positions);
+                                let mask = v16.filter_within_radius(center, radius_sq);
+                                for (i, &cand) in batch_candidates.iter().enumerate() {
+                                    if (mask & (1 << i)) != 0 {
+                                        if matched_count < output_buffer.len() {
+                                            output_buffer[matched_count] = cand;
+                                        }
+                                        matched_count += 1;
+                                    }
+                                }
+                                batch_len = 0;
+                            }
+                        }
+                        curr = self.next_in_cell[curr_idx];
+                    }
+                }
+            }
+        }
+
+        // Process remaining tail candidates (< 16)
+        if batch_len > 0 {
+            batch_positions[batch_len..16].fill(center);
+            let v16 = Vec3Fix16x::from_slice_16(&batch_positions);
+            let mask = v16.filter_within_radius(center, radius_sq);
+            for (i, &cand) in batch_candidates.iter().enumerate().take(batch_len) {
+                if (mask & (1 << i)) != 0 {
+                    if matched_count < output_buffer.len() {
+                        output_buffer[matched_count] = cand;
+                    }
+                    matched_count += 1;
+                }
+            }
+        }
+
+        SpatialQueryResult::new(matched_count.min(output_buffer.len()), matched_count)
+    }
+
+    /// Queries active entities within a directional vision cone using 16-wide SIMD batching.
+    ///
+    /// Evaluates viewing angle and maximum range simultaneously in hardware vector registers
+    /// via `Vec3Fix16x::filter_within_vision_cone`. Eliminates out-of-field entities early,
+    /// significantly reducing downstream AoI packet replication.
+    /// Matches are written directly into `output_buffer` without heap allocation.
+    pub fn query_vision_cone_batched_16x(
+        &self,
+        observer: Vec3Fix,
+        forward: Vec3Fix,
+        cos_half_sq: Fixed64,
+        max_range_sq: Fixed64,
+        personal_space_sq: Fixed64,
+        output_buffer: &mut [u32],
+    ) -> SpatialQueryResult {
+        let center_cell = CellCoord::from_position(observer);
+        let mut matched_count = 0;
+
+        let (max_dx, max_dy) = if max_range_sq <= Fixed64::from_i32(4096) {
+            (
+                1,
+                if max_range_sq <= Fixed64::from_i32(1024) {
+                    1
+                } else {
+                    2
+                },
+            )
+        } else if max_range_sq <= Fixed64::from_i32(16384) {
+            (2, 4)
+        } else {
+            let r_fixed = max_range_sq.sqrt();
+            let dx = (r_fixed.saturating_div(Fixed64::from_i32(CELL_HORIZONTAL_SIZE)))
+                .ceil()
+                .to_i32()
+                .max(1);
+            let dy = (r_fixed.saturating_div(Fixed64::from_i32(CELL_VERTICAL_SIZE)))
+                .ceil()
+                .to_i32()
+                .max(1);
+            (dx, dy)
+        };
+        let max_dz = max_dx;
+
+        let mut batch_candidates = [0u32; 16];
+        let mut batch_positions = [Vec3Fix::ZERO; 16];
+        let mut batch_len = 0;
+
+        // Cell neighborhood iteration around observer
+        for dx in -max_dx..=max_dx {
+            for dz in -max_dz..=max_dz {
+                for dy in -max_dy..=max_dy {
+                    let neighbor_cell =
+                        CellCoord::new(center_cell.x + dx, center_cell.y + dy, center_cell.z + dz);
+                    let key = neighbor_cell.spatial_key();
+                    let bucket = (key as usize) & self.bucket_mask;
+
+                    let mut curr = self.bucket_heads[bucket];
+                    if curr == TERMINAL_INDEX {
+                        continue;
+                    }
+                    while curr != TERMINAL_INDEX {
+                        let curr_idx = curr as usize;
+                        if self.entity_keys[curr_idx] == key && self.active_mask[curr_idx] {
+                            batch_candidates[batch_len] = curr;
+                            batch_positions[batch_len] = self.positions[curr_idx];
+                            batch_len += 1;
+
+                            if batch_len == 16 {
+                                let v16 = Vec3Fix16x::from_slice_16(&batch_positions);
+                                let mask = v16.filter_within_vision_cone(
+                                    observer,
+                                    forward,
+                                    cos_half_sq,
+                                    max_range_sq,
+                                    personal_space_sq,
+                                );
+                                for (i, &cand) in batch_candidates.iter().enumerate() {
+                                    if (mask & (1 << i)) != 0 {
+                                        if matched_count < output_buffer.len() {
+                                            output_buffer[matched_count] = cand;
+                                        }
+                                        matched_count += 1;
+                                    }
+                                }
+                                batch_len = 0;
+                            }
+                        }
+                        curr = self.next_in_cell[curr_idx];
+                    }
+                }
+            }
+        }
+
+        // Process remaining tail candidates (< 16)
+        if batch_len > 0 {
+            batch_positions[batch_len..16].fill(observer);
+            let v16 = Vec3Fix16x::from_slice_16(&batch_positions);
+            let mask = v16.filter_within_vision_cone(
+                observer,
+                forward,
+                cos_half_sq,
+                max_range_sq,
+                personal_space_sq,
+            );
             for (i, &cand) in batch_candidates.iter().enumerate().take(batch_len) {
                 if (mask & (1 << i)) != 0 {
                     if matched_count < output_buffer.len() {

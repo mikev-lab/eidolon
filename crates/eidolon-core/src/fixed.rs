@@ -456,6 +456,22 @@ impl Vec3Fix {
         out
     }
 
+    /// Computes the squared distances from 16 origin points to a common target point in parallel.
+    ///
+    /// Structured as an unrolled 16-wide batch allowing LLVM to auto-vectorize
+    /// arithmetic across AVX-512 or dual NEON vector registers.
+    #[inline]
+    pub fn batch_distance_squared_16x(origins: [Self; 16], target: Self) -> [Fixed64; 16] {
+        let mut out = [Fixed64::ZERO; 16];
+        for i in 0..16 {
+            let dx = origins[i].x - target.x;
+            let dy = origins[i].y - target.y;
+            let dz = origins[i].z - target.z;
+            out[i] = (dx * dx) + (dy * dy) + (dz * dz);
+        }
+        out
+    }
+
     /// Returns the Euclidean distance between two points.
     #[inline]
     pub fn distance(self, other: Self) -> Fixed64 {

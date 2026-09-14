@@ -72,7 +72,7 @@ pub use replay::{
     compute_entities_checksum, extrapolate_with_input, EntityStateSnapshot, KeyframeSnapshot,
     PlaybackSpeed, RecordedInputFrame, ReplayDivergence, MAX_KEYFRAME_ENTITIES,
 };
-pub use simd::Vec3Fix8x;
+pub use simd::{Vec3Fix16x, Vec3Fix8x};
 pub use structure::{
     calculate_stability, InteriorItemRecord, InteriorItemTransform, MaterialType, PieceType,
     SnapSocket, StructurePieceData, MAX_STABILITY, STANDARD_GRID_HORIZONTAL_METERS,

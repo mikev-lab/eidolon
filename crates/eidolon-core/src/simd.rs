@@ -176,6 +176,209 @@ impl Mul<Fixed64> for Vec3Fix8x {
     }
 }
 
+/// 16-lane 3D fixed-point vector representing 16 parallel entities in AVX-512 / dual-NEON registers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Vec3Fix16x {
+    /// 16 parallel X coordinates in 32.32 fixed-point.
+    pub x: [Fixed64; 16],
+    /// 16 parallel Y (elevation) coordinates in 32.32 fixed-point.
+    pub y: [Fixed64; 16],
+    /// 16 parallel Z coordinates in 32.32 fixed-point.
+    pub z: [Fixed64; 16],
+}
+
+impl Vec3Fix16x {
+    /// Zero vector across all 16 lanes.
+    pub const ZERO: Self = Self {
+        x: [Fixed64::ZERO; 16],
+        y: [Fixed64::ZERO; 16],
+        z: [Fixed64::ZERO; 16],
+    };
+
+    /// Constructs a 16-lane vector from explicit coordinate arrays.
+    #[inline]
+    pub const fn new(x: [Fixed64; 16], y: [Fixed64; 16], z: [Fixed64; 16]) -> Self {
+        Self { x, y, z }
+    }
+
+    /// Splats a single 3D fixed-point vector across all 16 parallel lanes.
+    #[inline]
+    pub const fn splat(v: Vec3Fix) -> Self {
+        Self {
+            x: [v.x; 16],
+            y: [v.y; 16],
+            z: [v.z; 16],
+        }
+    }
+
+    /// Loads 16 contiguous `Vec3Fix` vectors into 16-lane Struct-of-Arrays format.
+    #[inline]
+    pub fn from_slice_16(slice: &[Vec3Fix; 16]) -> Self {
+        let mut x = [Fixed64::ZERO; 16];
+        let mut y = [Fixed64::ZERO; 16];
+        let mut z = [Fixed64::ZERO; 16];
+        for i in 0..16 {
+            x[i] = slice[i].x;
+            y[i] = slice[i].y;
+            z[i] = slice[i].z;
+        }
+        Self { x, y, z }
+    }
+
+    /// Writes 16-lane Struct-of-Arrays data back into an array of 16 `Vec3Fix` vectors.
+    #[inline]
+    pub fn write_to_slice_16(&self, slice: &mut [Vec3Fix; 16]) {
+        for (i, item) in slice.iter_mut().enumerate() {
+            *item = Vec3Fix {
+                x: self.x[i],
+                y: self.y[i],
+                z: self.z[i],
+            };
+        }
+    }
+
+    /// Adds two 16-lane vectors in parallel using saturating fixed-point arithmetic.
+    #[inline]
+    pub fn saturating_add(&self, other: &Self) -> Self {
+        let mut res = Self::ZERO;
+        for i in 0..16 {
+            res.x[i] = self.x[i] + other.x[i];
+            res.y[i] = self.y[i] + other.y[i];
+            res.z[i] = self.z[i] + other.z[i];
+        }
+        res
+    }
+
+    /// Subtracts two 16-lane vectors in parallel using saturating fixed-point arithmetic.
+    #[inline]
+    pub fn saturating_sub(&self, other: &Self) -> Self {
+        let mut res = Self::ZERO;
+        for i in 0..16 {
+            res.x[i] = self.x[i] - other.x[i];
+            res.y[i] = self.y[i] - other.y[i];
+            res.z[i] = self.z[i] - other.z[i];
+        }
+        res
+    }
+
+    /// Multiplies all 16 lanes by a uniform scalar factor (e.g. delta time `dt`).
+    #[inline]
+    pub fn mul_scalar(&self, scalar: Fixed64) -> Self {
+        let mut res = Self::ZERO;
+        for i in 0..16 {
+            res.x[i] = self.x[i] * scalar;
+            res.y[i] = self.y[i] * scalar;
+            res.z[i] = self.z[i] * scalar;
+        }
+        res
+    }
+
+    /// In-place kinematics integration over 16 contiguous positions and velocities.
+    #[inline]
+    pub fn step_kinematics_chunk(
+        positions: &mut [Vec3Fix; 16],
+        velocities: &[Vec3Fix; 16],
+        dt: Fixed64,
+    ) {
+        let mut pos_simd = Self::from_slice_16(positions);
+        let vel_simd = Self::from_slice_16(velocities);
+        let disp = vel_simd.mul_scalar(dt);
+        pos_simd = pos_simd.saturating_add(&disp);
+        pos_simd.write_to_slice_16(positions);
+    }
+
+    /// Evaluates squared distances from 16 origin entities to a single target position.
+    #[inline]
+    pub fn batch_distance_squared(&self, target: Vec3Fix) -> [Fixed64; 16] {
+        let mut out = [Fixed64::ZERO; 16];
+        for (i, slot) in out.iter_mut().enumerate() {
+            let dx = self.x[i] - target.x;
+            let dy = self.y[i] - target.y;
+            let dz = self.z[i] - target.z;
+            *slot = (dx * dx) + (dy * dy) + (dz * dz);
+        }
+        out
+    }
+
+    /// Evaluates 16 entities against a radius threshold and returns a 16-bit matching bitmask.
+    #[inline]
+    pub fn filter_within_radius(&self, center: Vec3Fix, radius_sq: Fixed64) -> u16 {
+        let dists = self.batch_distance_squared(center);
+        let mut mask: u16 = 0;
+        for (i, &dist) in dists.iter().enumerate() {
+            if dist <= radius_sq {
+                mask |= 1 << i;
+            }
+        }
+        mask
+    }
+
+    /// Evaluates 16 entities against an observer's forward vision cone and returns a 16-bit bitmask.
+    ///
+    /// Entities beyond `max_range_sq` are culled.
+    /// Entities within `personal_space_sq` are always retained (ambient proximity).
+    /// Entities between personal space and max range must satisfy: `dot > 0` and `dot^2 >= cos_half_angle_sq * dist_sq`.
+    #[inline]
+    pub fn filter_within_vision_cone(
+        &self,
+        observer_pos: Vec3Fix,
+        forward_dir: Vec3Fix,
+        cos_half_angle_sq: Fixed64,
+        max_range_sq: Fixed64,
+        personal_space_sq: Fixed64,
+    ) -> u16 {
+        let mut mask: u16 = 0;
+        for i in 0..16 {
+            let dx = self.x[i] - observer_pos.x;
+            let dy = self.y[i] - observer_pos.y;
+            let dz = self.z[i] - observer_pos.z;
+            let dist_sq = (dx * dx) + (dy * dy) + (dz * dz);
+
+            if dist_sq > max_range_sq {
+                continue;
+            }
+
+            if dist_sq <= personal_space_sq {
+                mask |= 1 << i;
+                continue;
+            }
+
+            let dot = (dx * forward_dir.x) + (dz * forward_dir.z);
+            if dot > Fixed64::ZERO {
+                let dot_sq = dot * dot;
+                if dot_sq >= cos_half_angle_sq * dist_sq {
+                    mask |= 1 << i;
+                }
+            }
+        }
+        mask
+    }
+}
+
+impl Add for Vec3Fix16x {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        self.saturating_add(&rhs)
+    }
+}
+
+impl Sub for Vec3Fix16x {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        self.saturating_sub(&rhs)
+    }
+}
+
+impl Mul<Fixed64> for Vec3Fix16x {
+    type Output = Self;
+    #[inline]
+    fn mul(self, rhs: Fixed64) -> Self {
+        self.mul_scalar(rhs)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +508,77 @@ mod tests {
         let radius_sq = Fixed64::from_i32(256);
         let mask = vec_8x.filter_within_radius(target, radius_sq);
         assert_eq!(mask, 0x07);
+    }
+
+    #[test]
+    fn test_vec3fix16x_step_kinematics_chunk_parity() {
+        let mut pos = [Vec3Fix::ZERO; 16];
+        let mut vel = [Vec3Fix::ZERO; 16];
+        for i in 0..16 {
+            pos[i] = Vec3Fix::from_f64((i as f64) * 10.0, 0.0, 0.0);
+            vel[i] = Vec3Fix::from_f64((i as f64) + 1.0, 0.5, -1.0);
+        }
+
+        let dt = Fixed64::from_f64(0.05);
+
+        // Scalar reference
+        let mut expected = pos;
+        for i in 0..16 {
+            expected[i] += vel[i] * dt;
+        }
+
+        Vec3Fix16x::step_kinematics_chunk(&mut pos, &vel, dt);
+
+        for i in 0..16 {
+            assert_eq!(
+                pos[i], expected[i],
+                "Lane {i} must match scalar physics step"
+            );
+        }
+    }
+
+    #[test]
+    fn test_vec3fix16x_vision_cone_culling() {
+        let observer_pos = Vec3Fix::from_f64(0.0, 0.0, 0.0);
+        let forward_dir = Vec3Fix::from_f64(0.0, 0.0, 1.0); // Facing North (+Z)
+
+        // cos(67.5 deg) = 0.382683, cos^2(67.5 deg) = 0.146447
+        let cos_half_angle_sq = Fixed64::from_f64(0.146447);
+        let personal_space_sq = Fixed64::from_i32(4); // 2m personal space
+
+        let mut targets = [Vec3Fix::ZERO; 16];
+        // Target 0: In front directly (+Z = 10m) -> inside cone
+        targets[0] = Vec3Fix::from_f64(0.0, 0.0, 10.0);
+        // Target 1: Slightly to side (+X = 2m, +Z = 10m) -> inside cone
+        targets[1] = Vec3Fix::from_f64(2.0, 0.0, 10.0);
+        // Target 2: Directly behind (-Z = 10m) -> outside cone
+        targets[2] = Vec3Fix::from_f64(0.0, 0.0, -10.0);
+        // Target 3: Behind but within personal space (-Z = 1.0m, dist_sq = 1 <= 4) -> retained
+        targets[3] = Vec3Fix::from_f64(0.0, 0.0, -1.0);
+        // Target 4: 90 degrees to side (+X = 10m, Z = 0) -> outside 135 deg cone (dot = 0)
+        targets[4] = Vec3Fix::from_f64(10.0, 0.0, 0.0);
+
+        let v16 = Vec3Fix16x::from_slice_16(&targets);
+        let mask = v16.filter_within_vision_cone(
+            observer_pos,
+            forward_dir,
+            cos_half_angle_sq,
+            Fixed64::from_i32(1000),
+            personal_space_sq,
+        );
+
+        assert_eq!(mask & (1 << 0), 1 << 0, "Directly in front must be visible");
+        assert_eq!(mask & (1 << 1), 1 << 1, "Within vision arc must be visible");
+        assert_eq!(mask & (1 << 2), 0, "Directly behind must be culled");
+        assert_eq!(
+            mask & (1 << 3),
+            1 << 3,
+            "Behind in personal space must be retained"
+        );
+        assert_eq!(
+            mask & (1 << 4),
+            0,
+            "Perpendicular outside cone must be culled"
+        );
     }
 }

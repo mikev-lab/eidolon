@@ -5,7 +5,7 @@
 
 use eidolon_core::fixed::{Fixed64, Vec3Fix};
 use eidolon_core::quant::QuantizedYaw;
-use eidolon_core::simd::Vec3Fix8x;
+use eidolon_core::simd::{Vec3Fix16x, Vec3Fix8x};
 
 use crate::equipment::EquipmentContainer;
 use crate::error::WorldError;
@@ -222,9 +222,48 @@ impl SoaEntityStorage {
     /// Performs contiguous linear memory physics extrapolation across all active entities.
     ///
     /// Updates positions: `pos = pos + vel * dt` with 100% cache line utilization and zero branching,
-    /// accelerated by 8-lane SIMD registers.
+    /// accelerated by 16-lane SIMD registers.
     pub fn step_kinematics(&mut self, dt: Fixed64) {
-        self.step_kinematics_simd_8x(dt);
+        self.step_kinematics_simd_16x(dt);
+    }
+
+    /// Performs vectorized 16-wide physics extrapolation across active entities using 512-bit SIMD registers.
+    ///
+    /// Processes chunks of 16 entities using `Vec3Fix16x::step_kinematics_chunk` with AVX-512 / dual NEON parallelism,
+    /// falls back to an 8-wide chunk if remaining >= 8, and processes remaining tail entities (< 8)
+    /// sequentially with exact mathematical parity.
+    pub fn step_kinematics_simd_16x(&mut self, dt: Fixed64) {
+        let count = self.positions.len();
+        let chunks_16 = count / 16;
+        for c in 0..chunks_16 {
+            let start = c * 16;
+            let end = start + 16;
+            if let (Ok(pos_chunk), Ok(vel_chunk)) = (
+                <&mut [Vec3Fix; 16]>::try_from(&mut self.positions[start..end]),
+                <&[Vec3Fix; 16]>::try_from(&self.velocities[start..end]),
+            ) {
+                Vec3Fix16x::step_kinematics_chunk(pos_chunk, vel_chunk, dt);
+            }
+        }
+
+        let mut offset = chunks_16 * 16;
+        if count - offset >= 8 {
+            let start = offset;
+            let end = start + 8;
+            if let (Ok(pos_chunk), Ok(vel_chunk)) = (
+                <&mut [Vec3Fix; 8]>::try_from(&mut self.positions[start..end]),
+                <&[Vec3Fix; 8]>::try_from(&self.velocities[start..end]),
+            ) {
+                Vec3Fix8x::step_kinematics_chunk(pos_chunk, vel_chunk, dt);
+            }
+            offset += 8;
+        }
+
+        // Tail elements (< 8)
+        for i in offset..count {
+            let displacement = self.velocities[i] * dt;
+            self.positions[i] += displacement;
+        }
     }
 
     /// Performs vectorized 8-wide physics extrapolation across active entities using SIMD registers.
@@ -488,6 +527,40 @@ mod tests {
                 scalar_positions[i].z.raw(),
                 "Entity {} Z coordinate mismatch between SIMD and scalar",
                 i + 1
+            );
+        }
+    }
+
+    #[test]
+    fn test_soa_storage_simd_16x_parity_and_tail_handling() {
+        // Spawn 37 entities: 2 full 16-wide chunks (32) + 1 tail (5)
+        let mut storage = SoaEntityStorage::with_capacity(64);
+        let mut reference = SoaEntityStorage::with_capacity(64);
+
+        for i in 1..=37 {
+            let id = i as u32;
+            let pos = Vec3Fix::from_f64((i as f64) * 2.5, (i as f64) * 0.1, (i as f64) * -1.5);
+            let vel = Vec3Fix::from_f64((i as f64) * 0.2, 0.0, (i as f64) * 0.4);
+            let heading = QuantizedYaw::from_degrees((i as f64) * 10.0);
+
+            let params = EntitySpawnParams::new(id, pos, vel, heading);
+            storage.spawn(params.clone()).unwrap();
+            reference.spawn(params).unwrap();
+        }
+
+        let dt = Fixed64::from_f64(0.05);
+
+        // Step SIMD 16x vs scalar
+        storage.step_kinematics_simd_16x(dt);
+        reference.step_kinematics_scalar(dt);
+
+        assert_eq!(storage.len(), 37);
+        for i in 1..=37 {
+            let (pos_simd, _, _) = storage.get_transform(i).expect("simd transform");
+            let (pos_scalar, _, _) = reference.get_transform(i).expect("scalar transform");
+            assert_eq!(
+                pos_simd, pos_scalar,
+                "Entity {i} position must match between scalar and SIMD 16x"
             );
         }
     }
