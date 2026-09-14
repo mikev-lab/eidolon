@@ -34,6 +34,7 @@ pub mod social;
 pub mod territory;
 pub mod threat;
 pub mod transaction;
+pub mod voice_router;
 pub mod wal;
 pub mod zone;
 
@@ -118,6 +119,12 @@ pub use threat::{ThreatEntry, ThreatTable};
 pub use transaction::{
     AccountState, InventoryItem, TransactionManager, TransactionOp, TransactionStatus,
     LOCK_INVENTORY, LOCK_WALLET, MAX_DEDUP_HISTORY, MAX_INVENTORY_SLOTS,
+};
+pub use voice_router::{
+    AcousticMaterial, AcousticOcclusionResult, AttenuationModel, SpatialVoiceManager, VoiceEmitter,
+    VoiceError, VoiceListener, VoicePeerDescriptor, VoiceRoutingUpdate,
+    AIR_ABSORPTION_DB_PER_METER, DEFAULT_MAX_AUDIBLE_DISTANCE, DEFAULT_MIN_AUDIBLE_DISTANCE,
+    INAUDIBLE_GAIN_THRESHOLD, MAX_EMITTERS, MAX_LISTENERS, MAX_VOICE_CHANNELS_PER_LISTENER,
 };
 pub use wal::{
     DurableWalSink, MockDurableStorage, WalRecord, WalRingBuffer, WriteAheadJournal,
