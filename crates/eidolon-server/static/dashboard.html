@@ -1,0 +1,1280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eidolon Engine : Mission Control & GM Operations</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #080a0f;
+      --bg-surface: rgba(16, 22, 34, 0.75);
+      --bg-card: rgba(23, 32, 51, 0.65);
+      --bg-card-hover: rgba(30, 42, 68, 0.8);
+      --border-subtle: rgba(70, 110, 180, 0.2);
+      --border-glow: rgba(0, 240, 255, 0.4);
+      --cyan: #00f0ff;
+      --cyan-dim: rgba(0, 240, 255, 0.15);
+      --emerald: #00ff9d;
+      --emerald-dim: rgba(0, 255, 157, 0.15);
+      --amber: #ffb700;
+      --amber-dim: rgba(255, 183, 0, 0.15);
+      --crimson: #ff3366;
+      --crimson-dim: rgba(255, 51, 102, 0.15);
+      --purple: #b366ff;
+      --purple-dim: rgba(179, 102, 255, 0.15);
+      --text-main: #f0f4fc;
+      --text-muted: #8a9bb8;
+      --text-dim: #4e6080;
+      --font-ui: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --transition-fast: 0.15s ease;
+      --transition-normal: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(0, 240, 255, 0.05) 0%, transparent 40%),
+        radial-gradient(circle at 85% 85%, rgba(179, 102, 255, 0.04) 0%, transparent 40%),
+        linear-gradient(rgba(255, 255, 255, 0.01) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.01) 1px, transparent 1px);
+      background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+      color: var(--text-main);
+      font-family: var(--font-ui);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Top Navigation Header */
+    header {
+      background: rgba(12, 16, 26, 0.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-sm);
+      background: linear-gradient(135deg, #00f0ff, #7928ca);
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      font-size: 20px;
+      color: #000;
+      box-shadow: 0 0 16px rgba(0, 240, 255, 0.35);
+    }
+
+    .brand-text h1 {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      background: linear-gradient(90deg, #fff, #a2b9e7);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--emerald-dim);
+      color: var(--emerald);
+      border: 1px solid rgba(0, 255, 157, 0.3);
+    }
+
+    .pulse-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--emerald);
+      box-shadow: 0 0 8px var(--emerald);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.3); }
+    }
+
+    /* Telemetry Pill Strip */
+    .telemetry-strip {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(18, 24, 38, 0.6);
+      padding: 6px 14px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .telemetry-item {
+      display: flex;
+      flex-direction: column;
+      padding: 0 8px;
+      border-right: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .telemetry-item:last-child {
+      border-right: none;
+    }
+
+    .telemetry-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-dim);
+    }
+
+    .telemetry-val {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .telemetry-val.highlight {
+      color: var(--cyan);
+    }
+
+    .telemetry-val.good {
+      color: var(--emerald);
+    }
+
+    /* Header Controls */
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .input-token {
+      background: rgba(10, 14, 22, 0.8);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 7px 12px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-main);
+      width: 160px;
+      outline: none;
+      transition: var(--transition-fast);
+    }
+
+    .input-token:focus {
+      border-color: var(--cyan);
+      box-shadow: 0 0 10px var(--cyan-dim);
+    }
+
+    .btn {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      font-family: var(--font-ui);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 7px 14px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: var(--transition-normal);
+      user-select: none;
+    }
+
+    .btn:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--cyan);
+      box-shadow: 0 0 12px rgba(0, 240, 255, 0.2);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, rgba(0, 240, 255, 0.25), rgba(0, 150, 255, 0.3));
+      border-color: var(--cyan);
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, rgba(0, 240, 255, 0.4), rgba(0, 150, 255, 0.5));
+      box-shadow: 0 0 16px rgba(0, 240, 255, 0.4);
+    }
+
+    .btn-danger {
+      background: var(--crimson-dim);
+      border-color: rgba(255, 51, 102, 0.4);
+      color: var(--crimson);
+    }
+
+    .btn-danger:hover {
+      background: rgba(255, 51, 102, 0.3);
+      border-color: var(--crimson);
+      box-shadow: 0 0 14px rgba(255, 51, 102, 0.3);
+    }
+
+    /* Main Grid Dashboard */
+    main {
+      flex: 1;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 1fr 1.2fr;
+      grid-template-rows: auto auto;
+      gap: 24px;
+      max-width: 1800px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .card {
+      background: var(--bg-surface);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+
+    .card-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .card-title {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-body {
+      padding: 20px;
+      flex: 1;
+    }
+
+    /* Spatial Radar Panel */
+    .radar-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .radar-canvas-wrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1;
+      max-height: 440px;
+      background: #090e18;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+      overflow: hidden;
+      box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.8);
+    }
+
+    #radarCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: crosshair;
+    }
+
+    .radar-toolbar {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .radar-legend {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    /* Player Table Panel */
+    .table-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .search-input {
+      background: rgba(10, 14, 22, 0.7);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 7px 12px;
+      font-family: var(--font-ui);
+      font-size: 13px;
+      color: var(--text-main);
+      width: 220px;
+      outline: none;
+    }
+
+    .table-wrap {
+      max-height: 380px;
+      overflow-y: auto;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      text-align: left;
+    }
+
+    th {
+      background: rgba(22, 28, 44, 0.95);
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 10px 14px;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    td {
+      padding: 10px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: var(--text-main);
+    }
+
+    tr:hover {
+      background: rgba(0, 240, 255, 0.04);
+      cursor: pointer;
+    }
+
+    tr.selected {
+      background: rgba(0, 240, 255, 0.12);
+      outline: 1px solid var(--cyan);
+    }
+
+    .meter-bar {
+      width: 70px;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 999px;
+      overflow: hidden;
+      display: inline-block;
+      vertical-align: middle;
+      margin-left: 6px;
+    }
+
+    .meter-fill-hp {
+      height: 100%;
+      background: var(--emerald);
+    }
+
+    .meter-fill-mana {
+      height: 100%;
+      background: var(--purple);
+    }
+
+    /* Selected Player Quick Inspector */
+    .inspector-card {
+      background: rgba(14, 20, 32, 0.9);
+      border: 1px solid var(--cyan-dim);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      margin-top: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .inspector-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .inspector-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      font-size: 12px;
+    }
+
+    .teleport-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .coord-input {
+      background: rgba(8, 12, 20, 0.9);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 6px 10px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-main);
+      width: 70px;
+      outline: none;
+    }
+
+    /* GM Command Console */
+    .full-row {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1fr 1.2fr;
+      gap: 24px;
+    }
+
+    .console-form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .textarea-msg {
+      background: rgba(10, 14, 22, 0.8);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      font-family: var(--font-ui);
+      font-size: 13px;
+      color: var(--text-main);
+      width: 100%;
+      resize: vertical;
+      min-height: 70px;
+      outline: none;
+    }
+
+    .preset-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-subtle);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 11px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: var(--transition-fast);
+    }
+
+    .chip:hover {
+      background: var(--cyan-dim);
+      border-color: var(--cyan);
+      color: var(--cyan);
+    }
+
+    /* Live Event Log Stream */
+    .log-container {
+      background: rgba(8, 12, 20, 0.9);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      height: 220px;
+      overflow-y: auto;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .log-line {
+      display: flex;
+      gap: 12px;
+      line-height: 1.4;
+    }
+
+    .log-time {
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    .log-msg {
+      color: var(--text-main);
+      word-break: break-word;
+    }
+
+    /* Accessible Metrics Modal */
+    dialog {
+      background: rgba(14, 18, 28, 0.95);
+      backdrop-filter: blur(24px);
+      border: 1px solid var(--cyan-dim);
+      border-radius: var(--radius-lg);
+      color: var(--text-main);
+      width: 90%;
+      max-width: 800px;
+      padding: 24px;
+      margin: auto;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+      outline: none;
+    }
+
+    dialog::backdrop {
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .metrics-pre {
+      background: #080c14;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 14px;
+      max-height: 450px;
+      overflow-y: auto;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: #7dd3fc;
+      line-height: 1.5;
+    }
+
+    /* Toast Notification */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 12px 20px;
+      background: rgba(16, 24, 38, 0.95);
+      border: 1px solid var(--cyan);
+      border-radius: var(--radius-md);
+      box-shadow: 0 8px 30px rgba(0, 240, 255, 0.3);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      opacity: 0;
+      transform: translateY(20px);
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      pointer-events: none;
+      z-index: 1000;
+    }
+
+    #toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-logo">E</div>
+      <div class="brand-text">
+        <h1>EIDOLON</h1>
+      </div>
+      <div class="brand-badge">
+        <span class="pulse-dot"></span>
+        <span id="serverStatusText">ONLINE : 20 HZ</span>
+      </div>
+    </div>
+
+    <!-- Telemetry Strip -->
+    <div class="telemetry-strip" id="telemetryStrip">
+      <div class="telemetry-item">
+        <span class="telemetry-label">CCU (Players)</span>
+        <span class="telemetry-val highlight" id="statCcu">0</span>
+      </div>
+      <div class="telemetry-item">
+        <span class="telemetry-label">Tick P50 / P99</span>
+        <span class="telemetry-val good" id="statTick">0µs / 0µs</span>
+      </div>
+      <div class="telemetry-item">
+        <span class="telemetry-label">Wire Egress</span>
+        <span class="telemetry-val good" id="statEgress">0.82 KB/s</span>
+      </div>
+      <div class="telemetry-item">
+        <span class="telemetry-label">Uptime</span>
+        <span class="telemetry-val" id="statUptime">00:00:00</span>
+      </div>
+      <div class="telemetry-item">
+        <span class="telemetry-label">Total Entities</span>
+        <span class="telemetry-val" id="statEntities">0</span>
+      </div>
+    </div>
+
+    <!-- Header Controls -->
+    <div class="header-controls">
+      <input type="password" id="authTokenInput" class="input-token" placeholder="Bearer GM Token" title="Enter Admin API Secret Token">
+      <button class="btn btn-primary" id="btnRefresh" title="Force Telemetry Sync">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+        Poll
+      </button>
+      <button class="btn" id="btnMetrics" title="Inspect Prometheus Metrics">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+        Metrics
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Grid Content -->
+  <main>
+    <!-- Left Column: Spatial Zone Radar -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20M2 12a14.5 14.5 0 0 0 20 0"/></svg>
+          Zone Spatial Radar (1000m x 1000m)
+        </div>
+        <span style="font-size: 11px; color: var(--text-dim);" id="radarCoords">Pointer: (0.0, 0.0)</span>
+      </div>
+      <div class="card-body">
+        <div class="radar-container">
+          <div class="radar-canvas-wrap">
+            <canvas id="radarCanvas" width="500" height="500"></canvas>
+          </div>
+          <div class="radar-toolbar">
+            <div class="radar-legend">
+              <div class="legend-item">
+                <span class="legend-dot" style="background: var(--cyan); box-shadow: 0 0 6px var(--cyan);"></span>
+                <span>Active Players</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-dot" style="background: var(--amber);"></span>
+                <span>NPCs</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-dot" style="background: var(--crimson);"></span>
+                <span>Selected</span>
+              </div>
+            </div>
+            <span>Click entity to inspect; Double-click map to teleport selected</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Column: Player Management & Inspector -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--emerald)" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Connected Players Directory
+        </div>
+        <span class="brand-badge" id="playerCountBadge">0 Online</span>
+      </div>
+      <div class="card-body">
+        <div class="table-controls">
+          <input type="text" id="playerSearch" class="search-input" placeholder="Filter by name or ID...">
+          <button class="btn" id="btnCheckpoint" title="Trigger WAL fsync flush">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
+            Force WAL Checkpoint
+          </button>
+        </div>
+
+        <div class="table-wrap">
+          <table id="playersTable">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Name / Account</th>
+                <th>Position (X, Y, Z)</th>
+                <th>Health</th>
+                <th>Mana</th>
+                <th>Gear</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="playersTableBody">
+              <tr>
+                <td colspan="7" style="text-align: center; color: var(--text-dim); padding: 24px;">No active players connected</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Selected Player Inspector Card -->
+        <div class="inspector-card" id="inspectorCard" style="display: none;">
+          <div class="inspector-header">
+            <div>
+              <strong id="inspName" style="color: var(--cyan); font-size: 14px;">Player 1</strong>
+              <span id="inspPeer" style="font-size: 11px; color: var(--text-dim); margin-left: 8px;">127.0.0.1:7777</span>
+            </div>
+            <button class="btn btn-danger" id="btnKickSelected">Kick Player</button>
+          </div>
+          <div class="inspector-grid">
+            <div><strong>Entity ID:</strong> <span id="inspId">--</span></div>
+            <div><strong>Account ID:</strong> <span id="inspAccount">--</span></div>
+            <div><strong>HP / Mana:</strong> <span id="inspStats">--</span></div>
+            <div><strong>Equipped Gear:</strong> <span id="inspGear">--</span></div>
+          </div>
+          <div class="teleport-controls">
+            <span style="font-size: 12px; color: var(--text-muted);">Teleport To:</span>
+            <input type="number" id="teleX" class="coord-input" placeholder="X">
+            <input type="number" id="teleY" class="coord-input" placeholder="Y">
+            <input type="number" id="teleZ" class="coord-input" placeholder="Z">
+            <button class="btn btn-primary" id="btnTeleportSelected">Apply Teleport</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bottom Full-Width Row: GM Announcement Console & Live Log -->
+    <div class="full-row">
+      <!-- GM Global Broadcast Console -->
+      <section class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+            World Announcement & GM Broadcast
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="console-form">
+            <textarea id="broadcastText" class="textarea-msg" placeholder="Type global system shout announcement to all connected clients..."></textarea>
+            <div class="preset-chips">
+              <span class="chip" data-preset="[SYSTEM] Server maintenance scheduled in 15 minutes. Please head to safe zones.">Maintenance Alert</span>
+              <span class="chip" data-preset="[ALERT] An ancient World Boss has surfaced at coordinates (0.0, 0.0)!">World Boss Spawn</span>
+              <span class="chip" data-preset="[PVP] Free-for-all Arena battle is now open!">PvP Event</span>
+              <span class="chip" data-preset="[RULES] Movement speed violations will result in automatic state desync rubberbands.">Anti-Cheat Notice</span>
+            </div>
+            <div style="display: flex; justify-content: flex-end;">
+              <button class="btn btn-primary" id="btnSendBroadcast">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                Send Zone Broadcast
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Operational Audit Log Feed -->
+      <section class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--purple)" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            Live Operational Log Stream
+          </div>
+          <button class="btn" id="btnClearLogs" style="font-size: 11px; padding: 4px 8px;">Clear</button>
+        </div>
+        <div class="card-body">
+          <div class="log-container" id="logContainer">
+            <div class="log-line"><span class="log-time">00:00:00</span><span class="log-msg" style="color: var(--cyan);">[SYS] Eidolon Mission Control initialized. Connected to local node.</span></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Metrics Modal Dialog -->
+  <dialog id="metricsDialog" aria-labelledby="metricsTitle">
+    <div class="modal-header">
+      <h2 id="metricsTitle" style="font-size: 16px; font-weight: 700; color: var(--cyan);">Prometheus Metrics Exposition</h2>
+      <button class="btn" id="btnCloseMetrics">Close</button>
+    </div>
+    <pre class="metrics-pre" id="metricsContent">Loading metrics...</pre>
+  </dialog>
+
+  <!-- Toast Notification -->
+  <div id="toast">Notification Message</div>
+
+  <script>
+    // State management
+    let state = {
+      token: localStorage.getItem('eidolon_admin_token') || '',
+      players: [],
+      selectedPlayerId: null,
+      autoPollInterval: null,
+      scale: 0.45 // 1000m map mapped to 450px
+    };
+
+    const $ = id => document.getElementById(id);
+
+    // Initialize UI
+    window.addEventListener('DOMContentLoaded', () => {
+      $('authTokenInput').value = state.token;
+      $('authTokenInput').addEventListener('change', e => {
+        state.token = e.target.value.trim();
+        localStorage.setItem('eidolon_admin_token', state.token);
+        showToast('Admin Token saved');
+        pollStatus();
+      });
+
+      $('btnRefresh').addEventListener('click', () => pollStatus());
+
+      $('btnMetrics').addEventListener('click', () => openMetrics());
+      $('btnCloseMetrics').addEventListener('click', () => $('metricsDialog').close());
+
+      $('btnCheckpoint').addEventListener('click', () => triggerCheckpoint());
+
+      $('btnSendBroadcast').addEventListener('click', () => sendBroadcast());
+
+      $('btnClearLogs').addEventListener('click', () => {
+        $('logContainer').innerHTML = '';
+      });
+
+      // Quick announcement chip buttons
+      document.querySelectorAll('.chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          $('broadcastText').value = chip.getAttribute('data-preset');
+        });
+      });
+
+      // Player search filter
+      $('playerSearch').addEventListener('input', () => renderPlayerTable());
+
+      // Selected player actions
+      $('btnKickSelected').addEventListener('click', () => kickPlayer(state.selectedPlayerId));
+      $('btnTeleportSelected').addEventListener('click', () => {
+        const x = parseFloat($('teleX').value) || 0;
+        const y = parseFloat($('teleY').value) || 0;
+        const z = parseFloat($('teleZ').value) || 0;
+        teleportPlayer(state.selectedPlayerId, x, y, z);
+      });
+
+      // Canvas setup
+      initRadar();
+
+      // Initial poll and recurring timer (1s interval)
+      pollStatus();
+      state.autoPollInterval = setInterval(pollStatus, 1000);
+    });
+
+    function getAuthHeaders() {
+      const headers = { 'Content-Type': 'application/json' };
+      if (state.token) {
+        headers['Authorization'] = 'Bearer ' + state.token;
+      }
+      return headers;
+    }
+
+    function showToast(msg) {
+      const t = $('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    function addLog(msg, color) {
+      const now = new Date().toTimeString().split(' ')[0];
+      const div = document.createElement('div');
+      div.className = 'log-line';
+      div.innerHTML = `<span class="log-time">${now}</span><span class="log-msg" style="${color ? 'color:' + color : ''}">${escapeHtml(msg)}</span>`;
+      const container = $('logContainer');
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    async function pollStatus() {
+      try {
+        const [statusRes, playersRes, logsRes] = await Promise.all([
+          fetch('/api/status', { headers: getAuthHeaders() }),
+          fetch('/api/players', { headers: getAuthHeaders() }),
+          fetch('/api/logs', { headers: getAuthHeaders() })
+        ]);
+
+        if (statusRes.status === 401) {
+          $('serverStatusText').textContent = 'AUTH REQUIRED';
+          $('serverStatusText').parentElement.style.background = 'var(--crimson-dim)';
+          return;
+        }
+
+        if (statusRes.ok) {
+          const s = await statusRes.json();
+          $('statCcu').textContent = s.ccu.toLocaleString();
+          $('statTick').textContent = `${s.tick_p50_micros}µs / ${s.tick_p99_micros}µs`;
+          $('statEgress').textContent = `${s.wire_egress_kbps.toFixed(2)} KB/s`;
+          $('statEntities').textContent = s.total_entities.toLocaleString();
+
+          const hrs = Math.floor(s.uptime_secs / 3600).toString().padStart(2, '0');
+          const mins = Math.floor((s.uptime_secs % 3600) / 60).toString().padStart(2, '0');
+          const secs = (s.uptime_secs % 60).toString().padStart(2, '0');
+          $('statUptime').textContent = `${hrs}:${mins}:${secs}`;
+          $('serverStatusText').textContent = `ONLINE : TICK #${s.current_tick}`;
+          $('serverStatusText').parentElement.style.background = 'var(--emerald-dim)';
+        }
+
+        if (playersRes.ok) {
+          const raw = await playersRes.json();
+          state.players = raw.players || (Array.isArray(raw) ? raw : []);
+          $('playerCountBadge').textContent = `${state.players.length} Online`;
+          renderPlayerTable();
+          drawRadar();
+        }
+
+        if (logsRes.ok) {
+          const raw = await logsRes.json();
+          const logs = raw.logs || (Array.isArray(raw) ? raw : []);
+          if (logs.length > 0) {
+            // Update logs display with fresh server events
+            const container = $('logContainer');
+            if (container.children.length === 1 && container.children[0].textContent.includes('initialized')) {
+              container.innerHTML = '';
+            }
+            logs.slice(-10).forEach(l => {
+              const div = document.createElement('div');
+              div.className = 'log-line';
+              const timeStr = typeof l === 'object' ? (l.timestamp || '') : '';
+              const msgStr = typeof l === 'object' ? (l.message || '') : l;
+              div.innerHTML = `<span class="log-time">${timeStr}</span><span class="log-msg" style="color: var(--cyan);">${escapeHtml(msgStr)}</span>`;
+              container.appendChild(div);
+            });
+            container.scrollTop = container.scrollHeight;
+          }
+        }
+      } catch (err) {
+        // Network connection error
+        $('serverStatusText').textContent = 'OFFLINE : RETRYING';
+        $('serverStatusText').parentElement.style.background = 'var(--crimson-dim)';
+      }
+    }
+
+    function renderPlayerTable() {
+      const q = $('playerSearch').value.toLowerCase();
+      const tbody = $('playersTableBody');
+      const filtered = state.players.filter(p => 
+        p.name.toLowerCase().includes(q) || p.entity_id.toString().includes(q)
+      );
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 24px;">No matching players found</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = '';
+      filtered.forEach(p => {
+        const tr = document.createElement('tr');
+        if (p.entity_id === state.selectedPlayerId) tr.classList.add('selected');
+
+        const hpPct = Math.round((p.health / Math.max(1, p.max_health)) * 100);
+        const manaPct = Math.round((p.mana / Math.max(1, p.max_mana)) * 100);
+
+        tr.innerHTML = `
+          <td><strong style="color: var(--cyan);">#${p.entity_id}</strong></td>
+          <td>${escapeHtml(p.name)} <span style="font-size: 11px; color: var(--text-dim);">(Acc: ${p.account_id})</span></td>
+          <td style="font-family: var(--font-mono); font-size: 11px;">(${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)})</td>
+          <td>${p.health}/${p.max_health} <div class="meter-bar"><div class="meter-fill-hp" style="width: ${hpPct}%"></div></div></td>
+          <td>${p.mana}/${p.max_mana} <div class="meter-bar"><div class="meter-fill-mana" style="width: ${manaPct}%"></div></div></td>
+          <td><span class="brand-badge" style="background: var(--cyan-dim); color: var(--cyan);">${p.equipped_items_count}/9 Slots</span></td>
+          <td>
+            <button class="btn btn-danger" style="font-size: 11px; padding: 3px 8px;" onclick="event.stopPropagation(); kickPlayer(${p.entity_id})">Kick</button>
+          </td>
+        `;
+
+        tr.addEventListener('click', () => selectPlayer(p.entity_id));
+        tbody.appendChild(tr);
+      });
+    }
+
+    function selectPlayer(entityId) {
+      state.selectedPlayerId = entityId;
+      const p = state.players.find(x => x.entity_id === entityId);
+      if (!p) {
+        $('inspectorCard').style.display = 'none';
+        return;
+      }
+
+      $('inspectorCard').style.display = 'flex';
+      $('inspName').textContent = p.name;
+      $('inspPeer').textContent = p.peer_addr;
+      $('inspId').textContent = p.entity_id;
+      $('inspAccount').textContent = p.account_id;
+      $('inspStats').textContent = `${p.health}/${p.max_health} HP | ${p.mana}/${p.max_mana} MP`;
+      $('inspGear').textContent = `${p.equipped_items_count} of 9 slots equipped`;
+      $('teleX').value = p.x.toFixed(1);
+      $('teleY').value = p.y.toFixed(1);
+      $('teleZ').value = p.z.toFixed(1);
+
+      renderPlayerTable();
+      drawRadar();
+    }
+
+    async function kickPlayer(entityId) {
+      if (!confirm(`Are you sure you want to kick and despawn Entity #${entityId}?`)) return;
+      try {
+        const res = await fetch(`/api/players/${entityId}/kick`, {
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
+        if (res.ok) {
+          showToast(`Player #${entityId} kicked`);
+          addLog(`[GM] Kicked player #${entityId}`, 'var(--crimson)');
+          if (state.selectedPlayerId === entityId) {
+            state.selectedPlayerId = null;
+            $('inspectorCard').style.display = 'none';
+          }
+          pollStatus();
+        } else {
+          showToast('Kick command failed');
+        }
+      } catch (err) {
+        showToast('Error sending kick command');
+      }
+    }
+
+    async function teleportPlayer(entityId, x, y, z) {
+      try {
+        const res = await fetch(`/api/players/${entityId}/teleport`, {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ x, y, z })
+        });
+        if (res.ok) {
+          showToast(`Teleported Player #${entityId} to (${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)})`);
+          addLog(`[GM] Teleported #${entityId} to (${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)})`, 'var(--cyan)');
+          pollStatus();
+        } else {
+          showToast('Teleport command failed');
+        }
+      } catch (err) {
+        showToast('Error sending teleport command');
+      }
+    }
+
+    async function sendBroadcast() {
+      const text = $('broadcastText').value.trim();
+      if (!text) return;
+      try {
+        const res = await fetch('/api/broadcast', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ text })
+        });
+        if (res.ok) {
+          showToast('Broadcast dispatched');
+          addLog(`[BROADCAST] ${text}`, 'var(--amber)');
+          $('broadcastText').value = '';
+        } else {
+          showToast('Broadcast failed');
+        }
+      } catch (err) {
+        showToast('Error sending broadcast');
+      }
+    }
+
+    async function triggerCheckpoint() {
+      try {
+        const res = await fetch('/api/checkpoint', {
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
+        if (res.ok) {
+          showToast('WAL durability checkpoint flushed');
+          addLog('[WAL] Checkpoint flush completed', 'var(--emerald)');
+        }
+      } catch (err) {
+        showToast('Checkpoint trigger failed');
+      }
+    }
+
+    async function openMetrics() {
+      const dialog = $('metricsDialog');
+      dialog.showModal();
+      try {
+        const res = await fetch('/metrics');
+        const text = await res.text();
+        $('metricsContent').textContent = text;
+      } catch (err) {
+        $('metricsContent').textContent = 'Error loading metrics: ' + err;
+      }
+    }
+
+    /* 2D Canvas Radar Rendering */
+    function initRadar() {
+      const canvas = $('radarCanvas');
+      canvas.addEventListener('mousemove', e => {
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        const worldX = (mouseX - canvas.width / 2) / state.scale;
+        const worldZ = (mouseY - canvas.height / 2) / state.scale;
+        $('radarCoords').textContent = `Pointer: (${worldX.toFixed(1)}, ${worldZ.toFixed(1)})`;
+      });
+
+      canvas.addEventListener('click', e => {
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        const worldX = (mouseX - canvas.width / 2) / state.scale;
+        const worldZ = (mouseY - canvas.height / 2) / state.scale;
+
+        // Find closest player within 20m
+        let closest = null;
+        let minD = 20.0;
+        state.players.forEach(p => {
+          const d = Math.hypot(p.x - worldX, p.z - worldZ);
+          if (d < minD) {
+            minD = d;
+            closest = p;
+          }
+        });
+
+        if (closest) {
+          selectPlayer(closest.entity_id);
+        }
+      });
+
+      canvas.addEventListener('dblclick', e => {
+        if (!state.selectedPlayerId) return;
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        const worldX = (mouseX - canvas.width / 2) / state.scale;
+        const worldZ = (mouseY - canvas.height / 2) / state.scale;
+        teleportPlayer(state.selectedPlayerId, worldX, 0.0, worldZ);
+      });
+    }
+
+    function drawRadar() {
+      const canvas = $('radarCanvas');
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      const cx = w / 2;
+      const cy = h / 2;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // Draw background grid lines
+      ctx.strokeStyle = 'rgba(70, 110, 180, 0.12)';
+      ctx.lineWidth = 1;
+
+      for (let x = -500; x <= 500; x += 100) {
+        const px = cx + x * state.scale;
+        ctx.beginPath();
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, h);
+        ctx.stroke();
+      }
+
+      for (let z = -500; z <= 500; z += 100) {
+        const py = cy + z * state.scale;
+        ctx.beginPath();
+        ctx.moveTo(0, py);
+        ctx.lineTo(w, py);
+        ctx.stroke();
+      }
+
+      // Draw Range Rings (Immediate 50m, Mid 150m, Outer 300m)
+      [50, 150, 300].forEach(r => {
+        ctx.strokeStyle = 'rgba(0, 240, 255, 0.1)';
+        ctx.beginPath();
+        ctx.arc(cx, cy, r * state.scale, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+
+      // Axis cross
+      ctx.strokeStyle = 'rgba(0, 240, 255, 0.25)';
+      ctx.beginPath();
+      ctx.moveTo(cx, 0);
+      ctx.lineTo(cx, h);
+      ctx.moveTo(0, cy);
+      ctx.lineTo(w, cy);
+      ctx.stroke();
+
+      // Draw players
+      state.players.forEach(p => {
+        const px = cx + p.x * state.scale;
+        const py = cy + p.z * state.scale;
+
+        const isSelected = p.entity_id === state.selectedPlayerId;
+
+        if (isSelected) {
+          // Crosshair around selected player
+          ctx.strokeStyle = 'rgba(255, 51, 102, 0.8)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(px, py, 14, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(px - 18, py);
+          ctx.lineTo(px + 18, py);
+          ctx.moveTo(px, py - 18);
+          ctx.lineTo(px, py + 18);
+          ctx.stroke();
+        }
+
+        // Entity Dot
+        ctx.fillStyle = isSelected ? 'var(--crimson)' : 'var(--cyan)';
+        ctx.beginPath();
+        ctx.arc(px, py, isSelected ? 6 : 4.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Label
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '10px JetBrains Mono';
+        ctx.fillText(p.name, px + 8, py - 4);
+      });
+    }
+  </script>
+</body>
+</html>

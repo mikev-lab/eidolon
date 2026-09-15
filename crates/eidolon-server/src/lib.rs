@@ -6,6 +6,7 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod admin;
 pub mod agones;
 pub mod alerting;
 pub mod clock;
@@ -24,6 +25,10 @@ pub mod tick;
 pub mod work_stealing;
 
 // Re-export primary types for ergonomic engine and integration test consumption.
+pub use admin::{
+    AdminBridge, AdminPlayerSnapshot, AdminServer, AdminStatusSnapshot, GmCommand, MAX_ADMIN_LOGS,
+    MAX_PENDING_GM_COMMANDS,
+};
 pub use agones::{AgonesClient, AgonesState};
 pub use alerting::{
     ActiveAlert, AlertConfig, AlertEvaluator, AlertKind, AlertSeverity, PodLifecycleController,
