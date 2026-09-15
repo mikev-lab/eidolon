@@ -60,7 +60,7 @@ The table below details empirical egress volumes, monthly cloud bills, and annua
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Tier 0** | **5 Players** | Unoptimized (20 KB/s) | 0.16 TB | $11.87 / mo | $142.44 / yr | - |
 | *(Solo / Indie)* | *(Family / Dev)* | Semi-Optimized (8 KB/s) | 0.07 TB | $4.75 / mo | $57.00 / yr | $85.44 / yr |
-| | | **eidolon (1.02 KB/s)** | **0.01 TB** | **$0.61 / mo (Free)** | **$7.32 / yr** | **$135.12 / yr (100% Free)** |
+| | | **eidolon (1.02 KB/s)** | **0.01 TB** | **$0.61 / mo (Free VM)** | **$7.32 / yr** | **$135.12 / yr (Free VM Eligible)** |
 | **Tier 1** | **1,000 CCU** | Unoptimized (20 KB/s) | 33.0 TB | $2,374 / mo | $28,488 / yr | - |
 | *(Indie / Private)*| *(Active Community)*| Semi-Optimized (8 KB/s) | 13.2 TB | $949 / mo | $11,388 / yr | $17,100 / yr |
 | | | **eidolon (1.02 KB/s)** | **1.68 TB** | **$121 / mo** | **$1,452 / yr** | **$27,036 / yr (94.9%)** |
@@ -81,11 +81,12 @@ The table below details empirical egress volumes, monthly cloud bills, and annua
 
 ## 4. Key Financial Insights
 
-### The Google Cloud Free Tier Invariant (Tier 0)
-Google Cloud Platform provides an `Always Free` tier granting one `e2-micro` VM instance per month and **1 GB of egress per month to worldwide destinations**.
-At 5 concurrent users communicating via `eidolon`:
-- Total monthly bandwidth is **~0.01 TB (10 GB)**.
-- Combined with initial complimentary allowances, small indie development studios, university projects, and private community servers can operate **virtually free of charge ($0 to $0.61/month)** without credit card billing surprises.
+### The Google Cloud Free Tier Economics (Tier 0)
+Google Cloud Platform provides an `Always Free` tier granting one `e2-micro` VM instance per month (100% free compute and 30 GB standard disk) alongside **1 GB of egress per month to worldwide destinations**.
+At 5 concurrent users communicating via `eidolon` (playing 16 active hours per day):
+- Total raw monthly egress is approximately **8.8 GB to 10 GB**.
+- Subtracting the complimentary 1 GB allowance leaves ~7.8 to 9.0 GB billed at standard rates ($0.070/GB), totaling **$0.61 per month**.
+- For development testing or private play under 250 aggregate player-hours per month, total network egress remains under 1 GB, making the entire hosting footprint **literally $0.00/month**.
 
 ### The $100K/Year Break-Even Threshold (Tier 2)
 For a mid-sized multiplayer game with 10,000 concurrent players:

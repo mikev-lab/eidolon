@@ -104,3 +104,22 @@ For cloud hosting on Kubernetes, `AgonesClient` provides direct native HTTP/1.1 
 4. **Distance-Adaptive Multi-Resolution AoI Bitrate Scaling (Phase 46):** Dynamically scales bitpacked transforms across Tactical (7B), Midfield (5B), and Horizon (3B) tiers, slashing replication egress by 42.9%.
 5. **64-Byte Cache-Line Aligned Struct-of-Arrays Storage (Phase 47):** Eliminates split cache-line loads and false sharing, executing 10,000 CCU 20 Hz simulation with 0.249 ms p99 tick duration and 99.50% CPU headroom.
 
+---
+
+## 7. Scalability Milestones: Empirical Verification vs. Cluster Roadmap
+
+To ensure technical transparency for systems architects and engineering leads, `eidolon` maintains an explicit distinction between empirically measured single-node performance and horizontal cluster scaling topology:
+
+### 7.1 Empirical Single-Node Verification (10,000 CCU at 20 Hz)
+- **Measured Capability:** A single physical node running the release profile simulates 10,000 concurrent active entities within a **0.249 ms (p99)** tick duration (Phase 47).
+- **Available Headroom:** At 20 Hz (50.0 ms frame budget), simulation consumes less than 0.5% of the available frame time, leaving **99.50% CPU headroom** for gameplay scripts, pathfinding, and combat mechanics.
+- **Architectural Enablers:** Contiguous 64-byte L1 cache-line aligned blocks (`AlignedEntityBlock64`), 8-lane SIMD vector kinematics (`AlignedSoAChunk8`), and zero heap allocations during the hot simulation loop.
+
+### 7.2 Horizontal Cluster Scaling via Agones on Kubernetes (1M+ CCU)
+Rather than attempting to run millions of CCU on a single giant monolithic server (which creates catastrophic single points of failure, NUMA memory bus contention, and physical NIC saturation), `eidolon` scales horizontally:
+1. **Zoned World Partitions:** Large contiguous game worlds are divided into zones. Adjacent zones are hosted on dedicated pods, with entity migrations handled in-memory across 16-meter overlapping seam boundaries via low-latency cluster interconnects.
+2. **Ephemeral Instanced Dungeons:** Co-op dungeon rooms and battle instances are scheduled dynamically on Agones game server pods on party portal entry and reclaimed immediately upon party departure (scale-to-zero compute).
+3. **NIC Saturation Defense:** Legacy MMO servers streaming 20 KB/s per client saturate standard 1 Gbps cloud NICs at ~6,000 players. Because `eidolon` compresses replication egress to 1.02 KB/s (an 8.2 kbps wire footprint), a standard cloud pod can sustain over 50,000 concurrent sessions per gigabit of NIC capacity before encountering bandwidth limits.
+4. **Architectural Parity:** The server binary, wire protocols, and serialization codecs running on a local $0/month test instance are 100% identical to those deployed across thousands of pods in a multi-region Agones cluster.
+
+

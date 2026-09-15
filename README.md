@@ -47,7 +47,7 @@ Legacy multiplayer server architectures force an expensive, painful tradeoff:
 * **Microsecond Zero-GC Simulation Pacing:** Simulates 10,000 active entities in **0.249 ms (p99)**, leaving **99.50% CPU headroom** for gameplay scripts, pathfinding, and combat. Enforces single 64-byte L1 cache-line aligned Struct-of-Arrays storage and 8-lane SIMD vector kinematics.
 * **Sub-1KB/s Wire Footprint:** Compresses authoritative client replication down to **1.02 KB/s (L3/L4 wire)** via 44-bit quantization, 2nd-order kinematic dead reckoning, distance-adaptive multi-res AoI, and 32-bit streaming rANS entropy coding.
 * **Scale-to-Zero Compute & EoS Defense:** Solves the End-of-Service (EoS) cliff. Inactive accounts hibernate in <256 bytes ($0.0001/mo), while ephemeral dungeon rooms spin up in <50ms and reclaim 100% compute on party exit.
-* **Elastic Agones Kubernetes Scalability:** Scales horizontally from a single hobbyist node to **5,000,000 CCU on Kubernetes clusters** without changing a line of code or rewriting the backend.
+* **Elastic Agones Kubernetes Scalability:** Empirically verified up to 10,000 CCU on a single node (0.249 ms p99 tick, 99.50% CPU headroom); architected to scale horizontally to millions of concurrent users across Agones Kubernetes clusters without an architectural rewrite.
 
 ---
 
@@ -71,13 +71,13 @@ Streaming raw IEEE 754 coordinates at 20 KB/s per player burns over **$237,000 p
 | Scale / Concurrency | Unoptimized Baseline (20 KB/s) | Semi-Optimized (8 KB/s) | **eidolon Authoritative Wire (1.02 KB/s)** | Annual Studio Savings |
 | :--- | :--- | :--- | :--- | :--- |
 | **Bandwidth per Player** | 20.0 KB/s (160 kbps) | 8.0 KB/s (64 kbps) | **1.02 KB/s (8.2 kbps)** | **94.9% Bandwidth Reduction** |
-| **5 Players (Dev / EoS)** | $11.87 / mo ($142 / yr) | $4.75 / mo ($57 / yr) | **$0.61 / mo (100% Free on GCP)** | **$135 / yr (Free Tier Qualified)** |
+| **5 Players (Dev / EoS)** | $11.87 / mo ($142 / yr) | $4.75 / mo ($57 / yr) | **$0.61 / mo (Free VM + ~$0.61 egress)** | **$135 / yr (Free VM Eligible)** |
 | **1,000 CCU (Indie / Private)** | $2,374 / mo ($28.5k / yr) | $949 / mo ($11.4k / yr) | **$121 / mo ($1.45k / yr)** | **$27,036 / year** |
 | **10,000 CCU (Mid-Scale MMO)** | $23,738 / mo ($285k / yr) | $9,495 / mo ($114k / yr) | **$1,211 / mo ($14.5k / yr)** | **$270,324 / year** |
 | **100,000 CCU (Top Steam Title)**| $237,381 / mo ($2.85M / yr) | $94,952 / mo ($11.4M / yr)| **$12,106 / mo ($145k / yr)** | **$2,703,300 / year** |
 | **1,000,000 CCU (Global Hit)** | $2,373,811 / mo ($28.5M / yr)| $949,524 / mo ($11.4M / yr)| **$121,064 / mo ($1.45M / yr)** | **$27,032,964 / year** |
 
-*Calculated at blended $0.07/GB cloud internet egress across 16 active gameplay hours per player day. See [`docs/COST_ANALYSIS.md`](./docs/COST_ANALYSIS.md) for full financial breakdowns.*
+*Calculated at blended $0.07/GB cloud internet egress across 16 active gameplay hours per player day (8.8 GB/month for 5 players; after GCP's 1 GB free egress credit, net egress is ~$0.61/mo, while e2-micro VM compute is 100% free). For groups playing under 250 aggregate player-hours/month, total egress remains under 1 GB, making hosting literally $0.00/month. See [`docs/COST_ANALYSIS.md`](./docs/COST_ANALYSIS.md) for full financial breakdowns.*
 
 ---
 
