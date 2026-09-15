@@ -22,6 +22,7 @@
   <a href="#performance-benchmarks--wire-metrics">Benchmarks</a> •
   <a href="#workspace-crates">Workspace Crates</a> •
   <a href="#quickstart--developer-guide">Quickstart</a> •
+  <a href="#how-to-get-the-full-benefit-of-eidolon-developer-best-practices">Best Practices</a> •
   <a href="#technical-documentation">Documentation</a> •
   <a href="#licensing--fair-source-model">License</a>
 </p>
@@ -415,10 +416,26 @@ cargo test -p eidolon-server --test compliance
 
 ---
 
+## How to Get the Full Benefit of eidolon: Developer Best Practices
+
+To achieve the sub-1KB/s wire footprint, zero GC pauses, and 1,000+ player density on budget cloud instances, game developers should adhere to the **6 Golden Rules**:
+
+1. **Stream Intent, Never Stream Raw Positions:** The client must transmit WASD velocity vectors, heading deflections ($>2.81^\circ$), and action bits *only when inputs change*. Let client and server run deterministic extrapolation between updates; never flood the socket with continuous `(X, Y, Z)` coordinates.
+2. **Zero Allocations in Hot Simulation Loops:** Never call `Vec::new()`, `Box`, or dynamic heap allocators inside per-tick ability, combat, or damage calculations. Use pre-allocated buffers and fixed-point math (`Fixed64`, `Vec3Fix`).
+3. **Async SQPOLL WAL for Gameplay, Sync Barriers for Economy:** Use `DoubleBufferedJournalQueue` (1.15 µs buffer swap) for high-frequency combat and movement persistence. Reserve synchronous `fdatasync` barriers strictly for high-value economic actions (currency spends, rare item trades).
+4. **Configure Distance-Adaptive Multi-Res AoI:** Take full advantage of the 3-tier AoI scheduler. Keep close-range combat at 10 Hz (Tactical 7B), midfield at 2 Hz (5B), and distant entities at event-driven (Horizon 3B) to slash replication traffic by up to 98%.
+5. **64-Byte Hardware Cache Alignment for Custom State:** When extending the server with custom gameplay components, align hot struct arrays to 64 bytes (`#[repr(C, align(64))]`) or 8-lane SIMD chunks (`AlignedSoAChunk8`) to eliminate cache thrashing.
+6. **Pair with pak-delta for Client Patches:** Combine `eidolon`'s sub-1KB/s runtime wire with `pak-delta`'s archive-aware delta delivery to eliminate 50 GB client download bandwidth bills.
+
+👉 **Read the Complete Runbook:** **[Developer Best Practices Guide (`docs/DEVELOPER_BEST_PRACTICES.md`)](./docs/DEVELOPER_BEST_PRACTICES.md)**
+
+---
+
 ## Technical Documentation
 
 In-depth engineering specifications, mathematical proofs, and operational runbooks are published in `docs/`:
 
+* **[Developer Best Practices (`docs/DEVELOPER_BEST_PRACTICES.md`)](./docs/DEVELOPER_BEST_PRACTICES.md):** The 6 golden rules to achieve <1 KB/s wire footprint, 0 ms GC jitter, and 1,000+ CCU on $5 hardware.
 * **[Game Engine Integration (`docs/GAME_ENGINE_INTEGRATION.md`)](./docs/GAME_ENGINE_INTEGRATION.md):** Complete integration runbooks for Godot 4, Unreal Engine 5, Unity (2021-6), and custom C/C++ engines.
 * **[System Architecture (`docs/ARCHITECTURE.md`)](./docs/ARCHITECTURE.md):** System topology, tick loop scheduling, time budget enforcement, and Agones lifecycle.
 * **[Wire Protocol & Byte Math (`docs/WIRE_PROTOCOL.md`)](./docs/WIRE_PROTOCOL.md):** 32.32 fixed-point equations, 44-bit coordinate quantization, 1-byte yaw, and 12-byte packet framing.
