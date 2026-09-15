@@ -232,6 +232,7 @@ Use [`pak-delta`](https://github.com/mikev-lab/pak-delta) hand-in-hand with `eid
 | :--- | :--- | :--- |
 | **Stream WASD intent only on key change** | 85% to 99% reduction in upstream traffic | <35 B/s client ingress |
 | **Zero allocations in 20 Hz simulation** | Eliminates GC pauses and memory fragmentation | 0 ms GC jitter |
+| **Decouple database persistence via WAL** | Zero tick stalls, RPO = 0, flat binary saves | See [`PERSISTENCE_AND_DATABASE_INTEGRATION.md`](./PERSISTENCE_AND_DATABASE_INTEGRATION.md) |
 | **Use DoubleBufferedJournalQueue for WAL** | 4,180x faster transaction logging | <5 µs disk dispatch |
 | **Enforce 64-byte alignment on entity blocks** | Eliminates split cache-line memory stalls | <0.25 ms for 10k CCU |
 | **Configure Multi-Res AoI distance tiers** | 42.9% reduction in replication egress | <1.02 KB/s wire egress |
