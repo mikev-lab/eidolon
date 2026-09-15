@@ -68,31 +68,18 @@ impl GlobalCoord {
 
     /// Normalizes the local offset so that `0 <= offset.x < 256.0` and `0 <= offset.z < 256.0`.
     pub fn normalize(&mut self) {
-        let edge = SECTOR_EDGE_FIXED;
-
-        // Normalize X offset
-        if self.offset.x < Fixed64::ZERO {
-            // Negative offset: shift downward into negative sectors
-            let raw_x = self.offset.x.to_i32();
-            let shift_sectors = ((-raw_x - 1) / 256) + 1;
-            self.sector_x = self.sector_x.wrapping_sub(shift_sectors);
-            self.offset.x += Fixed64::from_i32(shift_sectors * 256);
-        } else if self.offset.x >= edge {
-            let shift_sectors = self.offset.x.to_i32() / 256;
-            self.sector_x = self.sector_x.wrapping_add(shift_sectors);
-            self.offset.x -= Fixed64::from_i32(shift_sectors * 256);
+        // Bit-exact branchless Euclidean sector normalization across arbitrary positive and negative ranges.
+        // In 32.32 fixed-point representation, each 256m sector spans 2^8 * 2^32 = 2^40 raw units.
+        let shift_x = (self.offset.x.raw() >> 40) as i32;
+        if shift_x != 0 {
+            self.sector_x = self.sector_x.wrapping_add(shift_x);
+            self.offset.x -= Fixed64::from_raw((shift_x as i64) << 40);
         }
 
-        // Normalize Z offset
-        if self.offset.z < Fixed64::ZERO {
-            let raw_z = self.offset.z.to_i32();
-            let shift_sectors = ((-raw_z - 1) / 256) + 1;
-            self.sector_z = self.sector_z.wrapping_sub(shift_sectors);
-            self.offset.z += Fixed64::from_i32(shift_sectors * 256);
-        } else if self.offset.z >= edge {
-            let shift_sectors = self.offset.z.to_i32() / 256;
-            self.sector_z = self.sector_z.wrapping_add(shift_sectors);
-            self.offset.z -= Fixed64::from_i32(shift_sectors * 256);
+        let shift_z = (self.offset.z.raw() >> 40) as i32;
+        if shift_z != 0 {
+            self.sector_z = self.sector_z.wrapping_add(shift_z);
+            self.offset.z -= Fixed64::from_raw((shift_z as i64) << 40);
         }
     }
 
@@ -103,9 +90,17 @@ impl GlobalCoord {
         let dx_sectors = (target.sector_x as i64) - (self.sector_x as i64);
         let dz_sectors = (target.sector_z as i64) - (self.sector_z as i64);
 
-        let dx = Fixed64::from_i32((dx_sectors * 256) as i32) + (target.offset.x - self.offset.x);
+        // Saturate sector displacement to prevent i32 overflow across planetary extremes
+        let dx_meters = dx_sectors
+            .saturating_mul(256)
+            .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        let dz_meters = dz_sectors
+            .saturating_mul(256)
+            .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+
+        let dx = Fixed64::from_i32(dx_meters) + (target.offset.x - self.offset.x);
         let dy = target.offset.y - self.offset.y;
-        let dz = Fixed64::from_i32((dz_sectors * 256) as i32) + (target.offset.z - self.offset.z);
+        let dz = Fixed64::from_i32(dz_meters) + (target.offset.z - self.offset.z);
 
         Vec3Fix {
             x: dx,
@@ -202,5 +197,28 @@ mod tests {
         let disp = p_origin.displacement_to(&p_distant);
         assert_eq!(disp.x.to_i32(), 10_000_000);
         assert_eq!(disp.z.to_i32(), 0);
+    }
+
+    #[test]
+    fn test_global_coord_normalization_extreme_bounds() {
+        // Test Fixed64::MIN without negation overflow panic on i32::MIN
+        let coord_min = GlobalCoord::from_continuous(Fixed64::MIN, Fixed64::ZERO, Fixed64::MIN);
+        assert!(coord_min.offset.x >= Fixed64::ZERO);
+        assert!(coord_min.offset.x < Fixed64::from_i32(256));
+        assert!(coord_min.offset.z >= Fixed64::ZERO);
+        assert!(coord_min.offset.z < Fixed64::from_i32(256));
+
+        // Test Fixed64::MAX
+        let coord_max = GlobalCoord::from_continuous(Fixed64::MAX, Fixed64::ZERO, Fixed64::MAX);
+        assert!(coord_max.offset.x >= Fixed64::ZERO);
+        assert!(coord_max.offset.x < Fixed64::from_i32(256));
+        assert!(coord_max.offset.z >= Fixed64::ZERO);
+        assert!(coord_max.offset.z < Fixed64::from_i32(256));
+
+        // Test multi-million sector displacement saturation without i32 overflow
+        let c1 = GlobalCoord::new(0, 0, Vec3Fix::ZERO);
+        let c2 = GlobalCoord::new(10_000_000, 0, Vec3Fix::ZERO);
+        let disp = c1.displacement_to(&c2);
+        assert!(disp.x > Fixed64::ZERO);
     }
 }

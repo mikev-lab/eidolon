@@ -339,4 +339,37 @@ mod tests {
         reconcile_smooth(&mut client_state, &synced_auth, Fixed64::from_f64(0.50));
         assert_eq!(client_state.yaw.as_byte(), 25);
     }
+
+    #[test]
+    fn test_reconcile_smooth_opposite_yaw_boundary() {
+        use crate::kinematics::reconcile_smooth;
+
+        let mut client_state = KinematicState {
+            position: Vec3Fix::ZERO,
+            velocity: Vec3Fix::ZERO,
+            acceleration: Vec3Fix::ZERO,
+            yaw: QuantizedYaw::from_byte(0),
+            angular_velocity: 0,
+            flags: 0,
+        };
+
+        // Exactly 180 degrees opposite (128 discrete steps): delta evaluates to -128
+        let auth_state = KinematicState {
+            position: Vec3Fix::ZERO,
+            velocity: Vec3Fix::ZERO,
+            acceleration: Vec3Fix::ZERO,
+            yaw: QuantizedYaw::from_byte(128),
+            angular_velocity: 0,
+            flags: 0,
+        };
+
+        // 50% smoothing should advance by 64 steps without i8::abs() overflow panic
+        reconcile_smooth(&mut client_state, &auth_state, Fixed64::from_f64(0.50));
+        // Shortest arc delta for 128 is -128; advance_toward turns by 64 steps (wrapping_sub) -> 192
+        assert_eq!(client_state.yaw.as_byte(), 192);
+
+        // Another 50% smoothing towards 128 (delta 128 - 192 = -64) advances by 32 steps -> 160
+        reconcile_smooth(&mut client_state, &auth_state, Fixed64::from_f64(0.50));
+        assert_eq!(client_state.yaw.as_byte(), 160);
+    }
 }

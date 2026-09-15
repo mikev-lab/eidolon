@@ -249,7 +249,7 @@ pub fn reconcile_smooth(
     // Advance heading toward authoritative yaw using exact fixed-point smoothing
     let yaw_delta = client_state.yaw.shortest_arc_delta(authoritative.yaw);
     if yaw_delta != 0 {
-        let delta_fixed = Fixed64::from_i32(yaw_delta.abs() as i32);
+        let delta_fixed = Fixed64::from_i32(yaw_delta.unsigned_abs() as i32);
         let step_fixed = delta_fixed * alpha_clamped;
         let step = (step_fixed + Fixed64::HALF).to_i32().clamp(0, 255) as u8;
         if step > 0 {

@@ -60,21 +60,29 @@ impl DoubleBufferedJournalQueue {
     /// Never blocks on disk I/O. Returns the allocated monotonic sequence number,
     /// or None if the active buffer is temporarily saturated pending a background flush.
     pub fn push(&self, record: WalRecord) -> Option<u64> {
-        let buf_idx = self.active_buf_idx.load(Ordering::Relaxed) % 2;
+        let mut buf_idx = self.active_buf_idx.load(Ordering::SeqCst) % 2;
 
-        if let Ok(mut guard) = self.buffers[buf_idx].lock() {
-            if guard.len() < JOURNAL_BUFFER_CAPACITY {
-                let seq = self.latest_sequence.fetch_add(1, Ordering::SeqCst) + 1;
-                guard.push(StampedWalRecord {
-                    sequence: seq,
-                    record,
-                });
-                Some(seq)
+        loop {
+            if let Ok(mut guard) = self.buffers[buf_idx].lock() {
+                // Re-verify that active_buf_idx did not change while acquiring the lock
+                let actual_idx = self.active_buf_idx.load(Ordering::SeqCst) % 2;
+                if actual_idx != buf_idx {
+                    buf_idx = actual_idx;
+                    continue;
+                }
+                if guard.len() < JOURNAL_BUFFER_CAPACITY {
+                    let seq = self.latest_sequence.fetch_add(1, Ordering::SeqCst) + 1;
+                    guard.push(StampedWalRecord {
+                        sequence: seq,
+                        record,
+                    });
+                    return Some(seq);
+                } else {
+                    return None;
+                }
             } else {
-                None
+                return None;
             }
-        } else {
-            None
         }
     }
 
@@ -210,14 +218,16 @@ impl AsyncSqpollJournal {
                     }
                 }
 
-                // Final drain on termination
-                let count = queue_clone.swap_and_drain(&mut drain_scratch);
-                if count > 0
-                    && queue_clone
-                        .flush_records(&drain_scratch, &mut worker_file)
-                        .is_ok()
-                {
-                    let _ = worker_file.sync_data();
+                // Final drain on termination: drain both partitions to guarantee zero lost records
+                for _ in 0..2 {
+                    let count = queue_clone.swap_and_drain(&mut drain_scratch);
+                    if count > 0
+                        && queue_clone
+                            .flush_records(&drain_scratch, &mut worker_file)
+                            .is_ok()
+                    {
+                        let _ = worker_file.sync_data();
+                    }
                 }
             })?;
 
@@ -253,18 +263,18 @@ impl AsyncSqpollJournal {
     /// Forces a synchronous buffer swap and disk sync (e.g. during graceful server shutdown).
     pub fn flush_sync(&mut self) -> io::Result<usize> {
         let mut scratch = Vec::with_capacity(JOURNAL_BUFFER_CAPACITY);
-        let count = self.queue.swap_and_drain(&mut scratch);
-        if count == 0 {
-            return Ok(0);
+        let mut total_bytes = 0;
+        // Drain both partitions to commit all in-flight records
+        for _ in 0..2 {
+            let count = self.queue.swap_and_drain(&mut scratch);
+            if count > 0 {
+                if let Some(ref mut file) = self.file {
+                    total_bytes += self.queue.flush_records(&scratch, file)?;
+                    file.sync_data()?;
+                }
+            }
         }
-
-        if let Some(ref mut file) = self.file {
-            let bytes = self.queue.flush_records(&scratch, file)?;
-            file.sync_data()?;
-            Ok(bytes)
-        } else {
-            Ok(0)
-        }
+        Ok(total_bytes)
     }
 
     /// Returns the path to the journal file.
@@ -365,5 +375,52 @@ mod tests {
         }
 
         let _ = std::fs::remove_file(&journal_path);
+    }
+
+    #[test]
+    fn test_double_buffered_journal_concurrent_stress() {
+        let queue = Arc::new(DoubleBufferedJournalQueue::new());
+        let total_pushes = 500;
+        let mut handles = Vec::new();
+
+        for t in 0..4 {
+            let q = Arc::clone(&queue);
+            handles.push(std::thread::spawn(move || {
+                for i in 0..total_pushes {
+                    let rec = WalRecord::new(
+                        (t * total_pushes + i + 1) as u64,
+                        100,
+                        1,
+                        100,
+                        crate::wal::OP_CURRENCY_DELTA,
+                        &[1, 2],
+                    )
+                    .unwrap();
+                    while q.push(rec).is_none() {
+                        std::thread::yield_now();
+                    }
+                }
+            }));
+        }
+
+        let mut drained_total = 0;
+        let mut scratch = Vec::new();
+        while drained_total < 4 * total_pushes {
+            let count = queue.swap_and_drain(&mut scratch);
+            drained_total += count;
+            std::thread::yield_now();
+        }
+
+        // Final double drain to assert zero stranded records
+        for _ in 0..2 {
+            let count = queue.swap_and_drain(&mut scratch);
+            drained_total += count;
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        assert_eq!(drained_total, 4 * total_pushes);
     }
 }
