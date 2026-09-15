@@ -159,7 +159,7 @@ impl DoubleBufferedJournalQueue {
 
         if highest_seq > 0 {
             self.committed_sequence
-                .store(highest_seq, Ordering::Release);
+                .fetch_max(highest_seq, Ordering::SeqCst);
         }
 
         Ok(total_bytes)
