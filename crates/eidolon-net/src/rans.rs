@@ -111,6 +111,35 @@ impl RansSymbolTable {
         })
     }
 
+    /// Constructs a uniform distribution table across `symbol_count` discrete symbols.
+    pub fn uniform(symbol_count: usize) -> Self {
+        let count = symbol_count.clamp(1, 256);
+        let weight_per_sym = (RANS_SCALE_SUM / count) as u16;
+        let remainder = RANS_SCALE_SUM % count;
+
+        let mut freqs = [0u16; 256];
+        let mut cum_freqs = [0u16; 257];
+        let mut slot_to_symbol = [0u8; RANS_SCALE_SUM];
+
+        let mut current_sum = 0u16;
+        for i in 0..count {
+            let f = weight_per_sym + if i < remainder { 1 } else { 0 };
+            freqs[i] = f;
+            cum_freqs[i] = current_sum;
+            let start = current_sum as usize;
+            let end = (start + f as usize).min(RANS_SCALE_SUM);
+            slot_to_symbol[start..end].fill(i as u8);
+            current_sum += f;
+        }
+        cum_freqs[count..=256].fill(current_sum);
+
+        Self {
+            freqs,
+            cum_freqs,
+            slot_to_symbol,
+        }
+    }
+
     /// Constructs a standard MMO kinematic delta distribution table.
     ///
     /// Calibrated for typical multiplayer kinematic distributions:
@@ -120,7 +149,10 @@ impl RansSymbolTable {
     /// - 2% full keyframe refreshes
     pub fn mmo_kinematic_tier_table() -> Self {
         let raw = [600, 300, 80, 20];
-        Self::from_frequencies(&raw).unwrap()
+        match Self::from_frequencies(&raw) {
+            Ok(table) => table,
+            Err(_) => Self::uniform(4),
+        }
     }
 
     /// Constructs a heading/yaw delta distribution table.
@@ -136,7 +168,10 @@ impl RansSymbolTable {
         raw[15] = 100; // -1 step (wrapped)
         raw[2] = 20;
         raw[14] = 20;
-        Self::from_frequencies(&raw).unwrap()
+        match Self::from_frequencies(&raw) {
+            Ok(table) => table,
+            Err(_) => Self::uniform(16),
+        }
     }
 }
 
@@ -227,12 +262,10 @@ impl<'a> RansDecoder<'a> {
 
         // The 4-byte state was written at the end of the byte stream
         let stream_len = data.len() - 4;
-        let state_bytes = [
-            data[stream_len],
-            data[stream_len + 1],
-            data[stream_len + 2],
-            data[stream_len + 3],
-        ];
+        let mut state_bytes = [0u8; 4];
+        if let Some(tail) = data.get(stream_len..stream_len + 4) {
+            state_bytes.copy_from_slice(tail);
+        }
         let state = u32::from_le_bytes(state_bytes);
 
         Ok(Self {
@@ -254,12 +287,16 @@ impl<'a> RansDecoder<'a> {
         let start = table.cum_freqs[s] as u32;
 
         // Inverse state transition: x' = freq * (x >> 8) + (slot - start)
-        self.state = freq * (self.state >> RANS_SCALE_BITS) + ((slot as u32) - start);
+        let offset = (slot as u32).saturating_sub(start);
+        self.state = freq
+            .saturating_mul(self.state >> RANS_SCALE_BITS)
+            .saturating_add(offset);
 
         // Renormalize: consume bytes from stream while state < L
         while self.state < RANS_LOWER_BOUND && self.cursor > 0 {
             self.cursor -= 1;
-            self.state = (self.state << 8) | (self.stream[self.cursor] as u32);
+            let byte = self.stream.get(self.cursor).copied().unwrap_or(0) as u32;
+            self.state = (self.state << 8) | byte;
         }
 
         sym

@@ -122,7 +122,9 @@ impl TerritoryPlot {
             return true;
         }
 
-        let owner = self.owning_guild_id.unwrap();
+        let Some(owner) = self.owning_guild_id else {
+            return true;
+        };
 
         let allowed_mask = if actor_guild_id == Some(owner) {
             self.guild_permissions

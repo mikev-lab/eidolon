@@ -75,6 +75,7 @@ impl Default for ClockGovernorConfig {
 pub struct ClockGovernor {
     config: ClockGovernorConfig,
     current_tick: u64,
+    baseline_tick: u64,
     baseline_instant: Instant,
     last_tick_instant: Instant,
     accumulated_lag: Duration,
@@ -97,6 +98,7 @@ impl ClockGovernor {
         Self {
             config,
             current_tick: 0,
+            baseline_tick: 0,
             baseline_instant: baseline,
             last_tick_instant: baseline,
             accumulated_lag: Duration::ZERO,
@@ -154,6 +156,9 @@ impl ClockGovernor {
                 .tick_interval
                 .saturating_mul(self.config.max_catch_up_ticks);
             self.baseline_instant = now.checked_sub(clamped_lag).unwrap_or(now);
+            self.baseline_tick = self
+                .current_tick
+                .saturating_sub(self.config.max_catch_up_ticks as u64);
             self.accumulated_lag = clamped_lag;
             self.last_tick_instant = now;
 
@@ -163,12 +168,13 @@ impl ClockGovernor {
             };
         }
 
-        // Standard monotonic target schedule evaluation
+        // Standard monotonic target schedule evaluation relative to active baseline tick
+        let elapsed_ticks = self.current_tick.saturating_sub(self.baseline_tick);
         let target_instant = self.baseline_instant
             + self
                 .config
                 .tick_interval
-                .saturating_mul(self.current_tick.min(u32::MAX as u64) as u32);
+                .saturating_mul(elapsed_ticks.min(u32::MAX as u64) as u32);
 
         self.last_tick_instant = now;
 
@@ -194,6 +200,9 @@ impl ClockGovernor {
                 // Runaway catch-up detected: clamp lag and advance baseline to prevent death spiral
                 self.metrics.catch_up_clamped_events += 1;
                 self.baseline_instant = now.checked_sub(max_allowed_lag).unwrap_or(now);
+                self.baseline_tick = self
+                    .current_tick
+                    .saturating_sub(self.config.max_catch_up_ticks as u64);
                 self.accumulated_lag = max_allowed_lag;
 
                 TickPacingAction::CatchUpImmediate {
@@ -310,5 +319,53 @@ mod tests {
         }
 
         assert_eq!(governor.metrics().catch_up_clamped_events, 1);
+    }
+
+    #[test]
+    fn test_virtualization_resync_subsequent_ticks_pacing() {
+        let config = ClockGovernorConfig {
+            tick_interval: Duration::from_millis(50),
+            suspend_threshold: Duration::from_millis(200),
+            max_catch_up_ticks: 4,
+        };
+        let mut governor = ClockGovernor::with_config(config);
+        let start = governor.baseline_instant;
+
+        // Simulate 1,000 normal ticks (50 seconds of continuous uptime)
+        let mut current_time = start;
+        for _ in 1..=1000 {
+            current_time += Duration::from_millis(50);
+            governor.evaluate_pacing(current_time, Duration::from_millis(5));
+        }
+        assert_eq!(governor.current_tick(), 1000);
+
+        // Simulate a 2,000ms hypervisor pause
+        let pause_time = current_time + Duration::from_millis(2000);
+        let resync_action = governor.evaluate_pacing(pause_time, Duration::from_millis(5));
+        assert!(matches!(
+            resync_action,
+            TickPacingAction::VirtualizationResync { .. }
+        ));
+
+        // Evaluate tick 1,002: exactly 50ms after the pause
+        let next_tick_time = pause_time + Duration::from_millis(50);
+        let post_pause_action = governor.evaluate_pacing(next_tick_time, Duration::from_millis(5));
+
+        // Pacing must be bounded: it must NOT sleep for 50 seconds!
+        match post_pause_action {
+            TickPacingAction::SleepHeadroom(headroom) => {
+                assert!(
+                    headroom <= Duration::from_millis(50),
+                    "Post-pause headroom must be bounded to tick interval, got {:?}",
+                    headroom
+                );
+            }
+            TickPacingAction::CatchUpImmediate { .. } => {
+                // Catch-up is also acceptable if behind
+            }
+            TickPacingAction::VirtualizationResync { .. } => {
+                panic!("Should not re-trigger pause resync");
+            }
+        }
     }
 }

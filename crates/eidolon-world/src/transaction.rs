@@ -427,10 +427,18 @@ impl TransactionManager {
                 }
 
                 // Execute atomic debit from source and credit to target
-                let from = self.accounts.get_mut(&from_account).unwrap();
+                let from = self
+                    .accounts
+                    .get_mut(&from_account)
+                    .ok_or(WorldError::TransactionAborted("Source account not found"))?;
                 from.debit_currency(amount, is_premium)?;
 
-                let to = self.accounts.get_mut(&to_account).unwrap();
+                let to =
+                    self.accounts
+                        .get_mut(&to_account)
+                        .ok_or(WorldError::TransactionAborted(
+                            "Target account not registered",
+                        ))?;
                 to.credit_currency(amount, is_premium);
 
                 // Append WAL record
@@ -488,14 +496,23 @@ impl TransactionManager {
                 }
 
                 // Execute atomic transfer: debit source, credit target
-                let from = self.accounts.get_mut(&from_account).unwrap();
+                let from = self
+                    .accounts
+                    .get_mut(&from_account)
+                    .ok_or(WorldError::TransactionAborted("Source account not found"))?;
                 from.remove_item(item_id, quantity)?;
 
-                let to = self.accounts.get_mut(&to_account).unwrap();
+                let to =
+                    self.accounts
+                        .get_mut(&to_account)
+                        .ok_or(WorldError::TransactionAborted(
+                            "Target account not registered",
+                        ))?;
                 if let Err(e) = to.add_item(item_id, quantity) {
                     // Rollback source account item
-                    let from_rollback = self.accounts.get_mut(&from_account).unwrap();
-                    let _ = from_rollback.add_item(item_id, quantity);
+                    if let Some(from_rollback) = self.accounts.get_mut(&from_account) {
+                        let _ = from_rollback.add_item(item_id, quantity);
+                    }
                     return Err(e);
                 }
 

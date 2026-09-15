@@ -360,7 +360,9 @@ impl OrderBook {
 
             // Execute partial or complete trade with best match
             if incoming.is_buy {
-                let ask = self.asks[idx].as_mut().expect("valid match");
+                let Some(ask) = self.asks.get_mut(idx).and_then(Option::as_mut) else {
+                    break;
+                };
                 let matched_qty = incoming.remaining_quantity.min(ask.remaining_quantity);
                 let exec_price = ask.unit_price; // Maker gets passive limit price
                 let total_price = (matched_qty as u64).saturating_mul(exec_price);
@@ -392,7 +394,9 @@ impl OrderBook {
                     ask.status = OrderStatus::PartiallyFilled;
                 }
             } else {
-                let bid = self.bids[idx].as_mut().expect("valid match");
+                let Some(bid) = self.bids.get_mut(idx).and_then(Option::as_mut) else {
+                    break;
+                };
                 let matched_qty = incoming.remaining_quantity.min(bid.remaining_quantity);
                 let exec_price = bid.unit_price; // Maker gets passive limit price
                 let total_price = (matched_qty as u64).saturating_mul(exec_price);

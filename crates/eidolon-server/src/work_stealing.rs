@@ -82,8 +82,23 @@ impl ChaseLevDeque {
 
     /// Creates a deque with the default capacity (4,096 elements).
     pub fn new() -> Self {
-        Self::with_capacity(DEFAULT_DEQUE_CAPACITY)
-            .expect("DEFAULT_DEQUE_CAPACITY is guaranteed power of two")
+        match Self::with_capacity(DEFAULT_DEQUE_CAPACITY) {
+            Ok(deque) => deque,
+            Err(_) => {
+                let capacity = 4096;
+                let mut slots = Vec::with_capacity(capacity);
+                for _ in 0..capacity {
+                    slots.push(AtomicU64::new(0));
+                }
+                Self {
+                    capacity,
+                    mask: capacity - 1,
+                    top: AtomicUsize::new(0),
+                    bottom: AtomicUsize::new(0),
+                    slots,
+                }
+            }
+        }
     }
 
     /// Returns the capacity of the deque.
@@ -221,8 +236,7 @@ impl WorkStealingPool {
         F: Fn(usize, u64) + Send + Sync + 'static,
     {
         let count = worker_count.max(1);
-        let injector =
-            Arc::new(ChaseLevDeque::with_capacity(16384).expect("16384 is power of two"));
+        let injector = Arc::new(ChaseLevDeque::with_capacity(16384).unwrap_or_default());
         let mut deques = Vec::with_capacity(count);
         for _ in 0..count {
             deques.push(Arc::new(ChaseLevDeque::new()));

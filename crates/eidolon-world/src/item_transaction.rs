@@ -211,7 +211,10 @@ impl ItemTransactionCoordinator {
 
         // Validate source slot item
         {
-            let src = self.containers.get(&intent.source_container_id).unwrap();
+            let src = self
+                .containers
+                .get(&intent.source_container_id)
+                .ok_or(ItemTransactionError::SourceContainerNotFound)?;
             let slot = src
                 .get_slot(intent.source_slot)
                 .ok_or(ItemTransactionError::ItemNotFound)?;
@@ -247,7 +250,10 @@ impl ItemTransactionCoordinator {
 
         // Validate target container capacity & weight
         {
-            let dst = self.containers.get(&intent.target_container_id).unwrap();
+            let dst = self
+                .containers
+                .get(&intent.target_container_id)
+                .ok_or(ItemTransactionError::TargetContainerNotFound)?;
             if dst.max_weight_grams > 0 {
                 let projected_weight = dst
                     .current_weight_grams
@@ -280,7 +286,7 @@ impl ItemTransactionCoordinator {
             let src = self
                 .containers
                 .get_mut(&intent.source_container_id)
-                .unwrap();
+                .ok_or(ItemTransactionError::SourceContainerNotFound)?;
             src.lock_slot(intent.source_slot)?;
         }
 
@@ -314,15 +320,16 @@ impl ItemTransactionCoordinator {
             let src = self
                 .containers
                 .get_mut(&intent.source_container_id)
-                .unwrap();
+                .ok_or(ItemTransactionError::SourceContainerNotFound)?;
 
             let full_stack = {
-                let item = src
+                let slot = src
                     .get_slot(intent.source_slot)
-                    .unwrap()
+                    .ok_or(ItemTransactionError::ItemNotFound)?;
+                let item = slot
                     .item
                     .as_ref()
-                    .unwrap();
+                    .ok_or(ItemTransactionError::ItemNotFound)?;
                 item.quantity == intent.quantity
             };
 
@@ -345,13 +352,17 @@ impl ItemTransactionCoordinator {
         } else {
             // Inter-container transfer
             let full_stack = {
-                let src = self.containers.get(&intent.source_container_id).unwrap();
-                let item = src
+                let src = self
+                    .containers
+                    .get(&intent.source_container_id)
+                    .ok_or(ItemTransactionError::SourceContainerNotFound)?;
+                let slot = src
                     .get_slot(intent.source_slot)
-                    .unwrap()
+                    .ok_or(ItemTransactionError::ItemNotFound)?;
+                let item = slot
                     .item
                     .as_ref()
-                    .unwrap();
+                    .ok_or(ItemTransactionError::ItemNotFound)?;
                 item.quantity == intent.quantity
             };
 
@@ -359,7 +370,7 @@ impl ItemTransactionCoordinator {
                 let src = self
                     .containers
                     .get_mut(&intent.source_container_id)
-                    .unwrap();
+                    .ok_or(ItemTransactionError::SourceContainerNotFound)?;
                 if full_stack {
                     src.commit_remove_item(intent.source_slot, intent.item_weight_grams)?
                 } else {
@@ -370,7 +381,7 @@ impl ItemTransactionCoordinator {
             let dst = self
                 .containers
                 .get_mut(&intent.target_container_id)
-                .unwrap();
+                .ok_or(ItemTransactionError::TargetContainerNotFound)?;
             let resulting_slot = match dst.insert_item(
                 item_to_move.clone(),
                 intent.target_slot,
@@ -379,15 +390,13 @@ impl ItemTransactionCoordinator {
                 Ok(slot) => slot,
                 Err(e) => {
                     // Rollback source item if destination insert failed
-                    let src = self
-                        .containers
-                        .get_mut(&intent.source_container_id)
-                        .unwrap();
-                    let _ = src.insert_item(
-                        item_to_move,
-                        Some(intent.source_slot),
-                        intent.item_weight_grams,
-                    );
+                    if let Some(src) = self.containers.get_mut(&intent.source_container_id) {
+                        let _ = src.insert_item(
+                            item_to_move,
+                            Some(intent.source_slot),
+                            intent.item_weight_grams,
+                        );
+                    }
                     return Err(e.into());
                 }
             };

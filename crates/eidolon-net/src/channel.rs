@@ -75,8 +75,10 @@ impl UnreliableSequencer {
 
         if Self::is_sequence_newer(seq, self.highest_received_sequence) {
             let diff = seq.wrapping_sub(self.highest_received_sequence) as usize;
-            if diff <= 32 {
+            if diff < 32 {
                 self.received_bitfield = (self.received_bitfield << diff) | (1 << (diff - 1));
+            } else if diff == 32 {
+                self.received_bitfield = 1 << 31;
             } else {
                 self.received_bitfield = 0;
             }
@@ -435,6 +437,22 @@ mod tests {
     fn test_unreliable_sequencer_rollover() {
         assert!(UnreliableSequencer::is_sequence_newer(0, 65535));
         assert!(!UnreliableSequencer::is_sequence_newer(65535, 0));
+    }
+
+    #[test]
+    fn test_unreliable_sequencer_diff_32_no_overflow() {
+        let mut seq = UnreliableSequencer::new();
+        // First packet at sequence 0
+        assert!(seq.process_incoming_sequence(0));
+        assert_eq!(seq.highest_received_sequence(), 0);
+
+        // Packet arriving exactly 32 sequence numbers ahead (diff == 32)
+        // Must not panic on arithmetic shift by 32
+        assert!(seq.process_incoming_sequence(32));
+        assert_eq!(seq.highest_received_sequence(), 32);
+        // Bit 31 must represent sequence 0 (32 steps behind 32)
+        let (_, bitfield) = seq.ack_data();
+        assert_eq!(bitfield, 1 << 31);
     }
 
     #[test]
