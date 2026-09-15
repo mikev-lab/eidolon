@@ -49,9 +49,11 @@ pub use item_graph::{
     ITEM_FLAG_DAMAGED, ITEM_FLAG_SOULBOUND, ITEM_FLAG_TRANSACTION_LOCKED,
 };
 pub use kinematics::{
-    extrapolate, reconcile_smooth, should_dispatch_update, DeadReckoningConfig, KinematicState,
-    QuinticHermiteSpline3D, FLAG_FALLING, FLAG_IDLE, FLAG_IMMOBILIZED, FLAG_JUMPING,
-    FLAG_SPRINTING, FLAG_WALKING,
+    extrapolate, reconcile_smooth, sanitize_velocity_intent, should_dispatch_update,
+    step_authoritative_vertical_kinematics, try_initiate_jump, DeadReckoningConfig, KinematicState,
+    MovementViolation, QuinticHermiteSpline3D, FLAG_FALLING, FLAG_IDLE, FLAG_IMMOBILIZED,
+    FLAG_JUMPING, FLAG_SPRINTING, FLAG_WALKING, JUMP_INITIAL_VELOCITY, MAX_AIRBORNE_TICKS,
+    MAX_GROUND_SPEED_CEILING, MAX_RUN_SPEED, MAX_SPRINT_SPEED, MAX_WALK_SPEED, STANDARD_GRAVITY,
 };
 pub use lock::{GenerationLockRegistry, LockEntry, LockError, LockToken, MAX_TRACKED_LOCKS};
 pub use market::{

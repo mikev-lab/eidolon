@@ -12,7 +12,11 @@ use eidolon_core::fixed::{Fixed64, Vec3Fix};
 use eidolon_core::geom::SpatialGeometry;
 use eidolon_core::global_coord::GlobalCoord;
 use eidolon_core::item::EquipmentSlot;
-use eidolon_core::kinematics::{extrapolate, KinematicState};
+use eidolon_core::kinematics::{
+    extrapolate, sanitize_velocity_intent, step_authoritative_vertical_kinematics,
+    try_initiate_jump, KinematicState, MovementViolation, FLAG_FALLING, FLAG_JUMPING,
+    FLAG_SPRINTING, MAX_RUN_SPEED, MAX_SPRINT_SPEED,
+};
 use eidolon_core::quant::{QuantizedCellCoord, QuantizedYaw};
 use eidolon_core::structure::{InteriorItemRecord, MaterialType, PieceType, SnapSocket};
 use eidolon_core::vehicle::VehicleKinematics;
@@ -124,6 +128,8 @@ pub struct ServerEntity {
     pub account_id: Option<u64>,
     /// Assigned session ID.
     pub session_id: Option<u64>,
+    /// Number of continuous simulation ticks the entity has been airborne.
+    pub airborne_ticks: u16,
 }
 
 /// Builder for declarative `EidolonApp` configuration.
@@ -561,6 +567,7 @@ impl EidolonApp {
             peer_addr: None,
             account_id: None,
             session_id: None,
+            airborne_ticks: 0,
         };
 
         let _ = self.spatial_grid.insert(id, pos);
@@ -603,6 +610,7 @@ impl EidolonApp {
             peer_addr: Some(peer_addr),
             account_id: Some(account_id),
             session_id: Some(session_id),
+            airborne_ticks: 0,
         };
 
         let _ = self.spatial_grid.insert(entity_id, pos);
@@ -713,8 +721,20 @@ impl EidolonApp {
                     entity.flags,
                 );
                 let next = extrapolate(&initial, 1, tick_interval_secs);
-                entity.position = next.position;
+                entity.position.x = next.position.x;
+                entity.position.z = next.position.z;
             }
+
+            // Authoritative vertical kinematics (Gravity & Floor Collision)
+            let floor_y = Fixed64::ZERO;
+            let _ = step_authoritative_vertical_kinematics(
+                &mut entity.position.y,
+                &mut entity.velocity.y,
+                &mut entity.flags,
+                &mut entity.airborne_ticks,
+                floor_y,
+                tick_interval_secs,
+            );
         }
 
         // 3. Update Spatial Grid Positions
@@ -736,15 +756,18 @@ impl EidolonApp {
                 start_tick,
                 duration_ticks,
                 start_pos,
+                allow_movement,
             } = entity.cast_state
             {
                 // Check movement break threshold (> 0.5m distance from cast origin)
-                let diff = entity.position - start_pos;
-                let moved_sq = (diff.x * diff.x) + (diff.y * diff.y) + (diff.z * diff.z);
-                if moved_sq > Fixed64::from_f64(0.25) {
-                    entity.cast_state = CastState::Idle;
-                    interrupted_casts.push((entity.id, ability_id, 1u8)); // 1 = Movement
-                    continue;
+                if !allow_movement {
+                    let diff = entity.position - start_pos;
+                    let moved_sq = (diff.x * diff.x) + (diff.y * diff.y) + (diff.z * diff.z);
+                    if moved_sq > Fixed64::from_f64(0.25) {
+                        entity.cast_state = CastState::Idle;
+                        interrupted_casts.push((entity.id, ability_id, 1u8)); // 1 = Movement
+                        continue;
+                    }
                 }
 
                 // Check cast bar completion
@@ -1099,6 +1122,7 @@ impl EidolonApp {
                                                             current_tick,
                                                             def.cast_duration_ticks,
                                                             caster.position,
+                                                            def.allow_movement,
                                                         );
                                                         self.broadcast_cast_started(
                                                             caster_id,
@@ -1365,16 +1389,64 @@ impl EidolonApp {
                             ]);
                             let flags = payload[12];
 
+                            let mut correction = None;
+
                             // Locate player entity by peer address
                             if let Some(player) = self
                                 .entities
                                 .values_mut()
                                 .find(|e| e.peer_addr == Some(peer))
                             {
-                                player.velocity.x = Fixed64::from_f64(vx as f64);
-                                player.velocity.z = Fixed64::from_f64(vz as f64);
-                                player.yaw = QuantizedYaw::from_degrees(yaw_deg as f64);
-                                player.flags = flags;
+                                let max_speed = if (flags & FLAG_SPRINTING) != 0 {
+                                    MAX_SPRINT_SPEED
+                                } else {
+                                    MAX_RUN_SPEED
+                                };
+
+                                let (sanitized_vx, sanitized_vz, violation) =
+                                    sanitize_velocity_intent(vx, vz, max_speed);
+
+                                match violation {
+                                    MovementViolation::BlatantOverspeed { .. }
+                                    | MovementViolation::NonFiniteFloat => {
+                                        // Blatant speed-hack or non-finite float injection:
+                                        // Reset velocity and trigger immediate authoritative StateCorrection!
+                                        player.velocity.x = Fixed64::ZERO;
+                                        player.velocity.z = Fixed64::ZERO;
+                                        correction = Some((
+                                            player.id,
+                                            player.position,
+                                            player.velocity,
+                                            player.yaw,
+                                            player.flags,
+                                        ));
+                                    }
+                                    MovementViolation::OverSpeedClamped { .. }
+                                    | MovementViolation::None => {
+                                        player.velocity.x = sanitized_vx;
+                                        player.velocity.z = sanitized_vz;
+                                        player.yaw = QuantizedYaw::from_degrees(yaw_deg as f64);
+
+                                        // Authoritative jump initiation only from ground
+                                        if (flags & FLAG_JUMPING) != 0 {
+                                            try_initiate_jump(
+                                                player.position.y,
+                                                &mut player.velocity.y,
+                                                &mut player.flags,
+                                                &mut player.airborne_ticks,
+                                                Fixed64::ZERO,
+                                            );
+                                        }
+
+                                        player.flags = (flags & !(FLAG_JUMPING | FLAG_FALLING))
+                                            | (player.flags & (FLAG_JUMPING | FLAG_FALLING));
+                                    }
+                                    MovementViolation::LevitationWatchdogTrip { .. } => {}
+                                }
+                            }
+
+                            if let Some((eid, pos, vel, yaw, flg)) = correction {
+                                self.send_state_correction_to_peer(peer, eid, pos, vel, yaw, flg);
                             }
                         }
                         _ => {}
@@ -1698,6 +1770,32 @@ impl EidolonApp {
         payload[1..5].copy_from_slice(&entity_id.to_be_bytes());
         payload[5..9].copy_from_slice(&item_id.to_be_bytes());
         payload[9..13].copy_from_slice(&amount.to_be_bytes());
+        self.send_reliable_event_to_peer(peer, &payload);
+    }
+
+    /// Dispatches an authoritative state correction (rubber-band) packet to peer,
+    /// forcefully reconciling client-side prediction to verified server coordinates.
+    pub fn send_state_correction_to_peer(
+        &self,
+        peer: SocketAddr,
+        entity_id: u32,
+        pos: Vec3Fix,
+        vel: Vec3Fix,
+        yaw: QuantizedYaw,
+        flags: u8,
+    ) {
+        let mut payload = [0u8; 63];
+        payload[0] = 10; // StateCorrection / RubberBand
+        payload[1..5].copy_from_slice(&entity_id.to_be_bytes());
+        payload[5..13].copy_from_slice(&self.current_tick.to_be_bytes());
+        payload[13..21].copy_from_slice(&pos.x.raw().to_be_bytes());
+        payload[21..29].copy_from_slice(&pos.y.raw().to_be_bytes());
+        payload[29..37].copy_from_slice(&pos.z.raw().to_be_bytes());
+        payload[37] = yaw.as_byte();
+        payload[38] = flags;
+        payload[39..47].copy_from_slice(&vel.x.raw().to_be_bytes());
+        payload[47..55].copy_from_slice(&vel.y.raw().to_be_bytes());
+        payload[55..63].copy_from_slice(&vel.z.raw().to_be_bytes());
         self.send_reliable_event_to_peer(peer, &payload);
     }
 

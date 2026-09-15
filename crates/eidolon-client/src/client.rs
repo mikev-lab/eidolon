@@ -922,6 +922,100 @@ impl EidolonClient {
                 let time_dilation = (factor_raw as f32) / 4294967296.0;
                 events.push(ClientEvent::TimeDilationChanged { time_dilation });
             }
+            // State correction (rubber-band): type (1B) + entity_id (4B) + tick (8B) + pos (24B) + yaw (1B) + flags (1B) + vel (24B) = 63B
+            10 if payload.len() >= 63 => {
+                let entity_id =
+                    u32::from_be_bytes([payload[1], payload[2], payload[3], payload[4]]);
+                let tick = u64::from_be_bytes([
+                    payload[5],
+                    payload[6],
+                    payload[7],
+                    payload[8],
+                    payload[9],
+                    payload[10],
+                    payload[11],
+                    payload[12],
+                ]);
+                let pos_x_raw = i64::from_be_bytes([
+                    payload[13],
+                    payload[14],
+                    payload[15],
+                    payload[16],
+                    payload[17],
+                    payload[18],
+                    payload[19],
+                    payload[20],
+                ]);
+                let pos_y_raw = i64::from_be_bytes([
+                    payload[21],
+                    payload[22],
+                    payload[23],
+                    payload[24],
+                    payload[25],
+                    payload[26],
+                    payload[27],
+                    payload[28],
+                ]);
+                let pos_z_raw = i64::from_be_bytes([
+                    payload[29],
+                    payload[30],
+                    payload[31],
+                    payload[32],
+                    payload[33],
+                    payload[34],
+                    payload[35],
+                    payload[36],
+                ]);
+                let yaw_byte = payload[37];
+                let flags = payload[38];
+                let vel_x_raw = i64::from_be_bytes([
+                    payload[39],
+                    payload[40],
+                    payload[41],
+                    payload[42],
+                    payload[43],
+                    payload[44],
+                    payload[45],
+                    payload[46],
+                ]);
+                let vel_y_raw = i64::from_be_bytes([
+                    payload[47],
+                    payload[48],
+                    payload[49],
+                    payload[50],
+                    payload[51],
+                    payload[52],
+                    payload[53],
+                    payload[54],
+                ]);
+                let vel_z_raw = i64::from_be_bytes([
+                    payload[55],
+                    payload[56],
+                    payload[57],
+                    payload[58],
+                    payload[59],
+                    payload[60],
+                    payload[61],
+                    payload[62],
+                ]);
+
+                let pos_x = (pos_x_raw as f64 / 4294967296.0) as f32;
+                let pos_y = (pos_y_raw as f64 / 4294967296.0) as f32;
+                let pos_z = (pos_z_raw as f64 / 4294967296.0) as f32;
+                let vel_x = (vel_x_raw as f64 / 4294967296.0) as f32;
+                let vel_y = (vel_y_raw as f64 / 4294967296.0) as f32;
+                let vel_z = (vel_z_raw as f64 / 4294967296.0) as f32;
+                let yaw_deg = QuantizedYaw::from_byte(yaw_byte).to_degrees() as f32;
+
+                events.push(ClientEvent::StateCorrection {
+                    entity_id,
+                    tick,
+                    position: [pos_x, pos_y, pos_z],
+                    velocity: [vel_x, vel_y, vel_z],
+                    yaw_deg,
+                    flags,
+                });
+            }
             _ => {}
         }
     }

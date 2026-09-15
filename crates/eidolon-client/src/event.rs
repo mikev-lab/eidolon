@@ -77,6 +77,21 @@ pub enum ClientEvent {
         /// Authoritative server heading in degrees.
         yaw_deg: f32,
     },
+    /// Authoritative server state correction (rubber-band) forcing immediate client prediction reset.
+    StateCorrection {
+        /// Entity ID being corrected.
+        entity_id: u32,
+        /// Authoritative server tick.
+        tick: u64,
+        /// Authoritative continuous world position [X, Y, Z].
+        position: [f32; 3],
+        /// Authoritative continuous velocity [X, Y, Z].
+        velocity: [f32; 3],
+        /// Authoritative facing heading in degrees.
+        yaw_deg: f32,
+        /// Movement flags.
+        flags: u8,
+    },
     /// Active ability cast initiated with a cast bar duration.
     CastStarted {
         /// Entity ID performing the cast.

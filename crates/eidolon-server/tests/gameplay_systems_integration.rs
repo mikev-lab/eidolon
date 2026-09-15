@@ -16,7 +16,6 @@ use std::net::SocketAddr;
 
 use eidolon_core::fixed::{Fixed64, Vec3Fix};
 use eidolon_core::item::EquipmentSlot;
-use eidolon_core::quant::QuantizedYaw;
 use eidolon_server::EidolonApp;
 use eidolon_world::ability::{get_ability_definition, CastState};
 use eidolon_world::party::PartyMember;
@@ -107,6 +106,7 @@ fn test_cast_bar_progression_and_movement_interrupt() {
         0, // Start at tick 0
         fireball_def.cast_duration_ticks,
         caster.position,
+        fireball_def.allow_movement,
     );
 
     // Tick forward 10 ticks (0.5s): Cast should still be in progress
@@ -144,8 +144,14 @@ fn test_cast_bar_progression_and_movement_interrupt() {
     // Restart Fireball cast while remaining stationary
     let caster_mut = server.get_entity_mut(10).expect("Caster exists");
     let current_pos = caster_mut.position;
-    caster_mut.cast_state =
-        CastState::start_cast(1, 20, 0, fireball_def.cast_duration_ticks, current_pos);
+    caster_mut.cast_state = CastState::start_cast(
+        1,
+        20,
+        0,
+        fireball_def.cast_duration_ticks,
+        current_pos,
+        fireball_def.allow_movement,
+    );
 
     // Advance 21 ticks: Cast completes and deals 60 damage!
     for _ in 0..21 {
@@ -162,31 +168,29 @@ fn test_cast_bar_progression_and_movement_interrupt() {
     let target = server.get_entity(20).expect("Target exists");
     assert_eq!(
         target.health, 40,
-        "Target should take 60 Fireball damage (100 - 60 = 40)"
+        "Target health should be reduced from 100 to 40 (60 damage dealt)"
     );
 }
 
 #[test]
-fn test_geometric_aoe_targeting_cone_and_sphere() {
+fn test_spatial_combat_targeting_cone_and_sphere() {
     let mut server = EidolonApp::builder()
         .bind("127.0.0.1:0")
         .expect("Bind server")
         .build()
         .expect("Build server");
 
-    // Spawn caster at origin (0, 0, 0) facing North (Yaw = 0 degrees, forward along +Z)
+    // Spawn caster at (0, 0, 0) facing North (Yaw = 0)
     server.spawn_npc(1, 0, 0.0, 0.0, 0.0).expect("Spawn caster");
-    let caster = server.get_entity_mut(1).expect("Caster exists");
-    caster.yaw = QuantizedYaw::from_degrees(0.0);
 
-    // Spawn 3 targets for ForwardCone hit-testing (Arcane Cleave: 45-deg half-angle, 8m range):
-    // Target A: In front at (0, 0, 5) -> Distance = 5m, angle = 0 deg (INSIDE CONE)
+    // Spawn 3 targets:
+    // Target A: In front inside cone at (0, 0, 5) -> Distance = 5m, Angle = 0 deg (INSIDE CONE)
     server
         .spawn_npc(10, 1, 0.0, 0.0, 5.0)
         .expect("Spawn target A");
-    // Target B: Behind caster at (0, 0, -4) -> Angle = 180 deg (OUTSIDE CONE)
+    // Target B: Behind caster at (0, 0, -5) -> Distance = 5m, Angle = 180 deg (OUTSIDE CONE)
     server
-        .spawn_npc(11, 1, 0.0, 0.0, -4.0)
+        .spawn_npc(11, 1, 0.0, 0.0, -5.0)
         .expect("Spawn target B");
     // Target C: In front but beyond range at (0, 0, 12) -> Distance = 12m (OUT OF RANGE)
     server
@@ -196,7 +200,7 @@ fn test_geometric_aoe_targeting_cone_and_sphere() {
     // Ability ID 2 = Arcane Cleave (instant cast, 40 base damage, cone)
     let caster_mut = server.get_entity_mut(1).expect("Caster exists");
     let caster_pos = caster_mut.position;
-    caster_mut.cast_state = CastState::start_cast(2, 0, 0, 0, caster_pos);
+    caster_mut.cast_state = CastState::start_cast(2, 0, 0, 0, caster_pos, true);
 
     // Tick server to resolve instant ability
     server.tick().expect("Tick");
@@ -230,7 +234,7 @@ fn test_geometric_aoe_targeting_cone_and_sphere() {
 
     let caster_mut = server.get_entity_mut(1).expect("Caster exists");
     let caster_pos = caster_mut.position;
-    caster_mut.cast_state = CastState::start_cast(4, 0, 0, 0, caster_pos);
+    caster_mut.cast_state = CastState::start_cast(4, 0, 0, 0, caster_pos, true);
 
     server.tick().expect("Tick");
 

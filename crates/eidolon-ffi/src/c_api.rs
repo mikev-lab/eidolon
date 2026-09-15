@@ -291,6 +291,21 @@ pub extern "C" fn eidolon_client_poll_events(
                         param1: 0,
                         param2: 0,
                     },
+                    ClientEvent::StateCorrection {
+                        entity_id,
+                        position,
+                        yaw_deg,
+                        ..
+                    } => EidolonEvent {
+                        event_type: EIDOLON_EVENT_ENTITY_UPDATED,
+                        entity_id,
+                        x: position[0],
+                        y: position[1],
+                        z: position[2],
+                        yaw_degrees: yaw_deg,
+                        param1: 0,
+                        param2: 0,
+                    },
                     ClientEvent::CastStarted {
                         entity_id,
                         ability_id,

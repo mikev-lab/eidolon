@@ -57,12 +57,14 @@ pub struct AbilityDefinition {
     pub base_heal: u32,
     /// Geometric targeting shape.
     pub shape: AbilityShape,
+    /// Whether the caster is permitted to move without interrupting the cast.
+    pub allow_movement: bool,
 }
 
 /// Returns the blueprint definition for standard built-in abilities.
 pub fn get_ability_definition(ability_id: u32) -> Option<AbilityDefinition> {
     match ability_id {
-        // Fireball: 1.0s cast, 25 mana, 2.0s cooldown, 20m range, 60 damage
+        // Fireball: 1.0s cast, 25 mana, 2.0s cooldown, 20m range, 60 damage (stationary)
         1 => Some(AbilityDefinition {
             ability_id: 1,
             name: "Fireball",
@@ -74,6 +76,7 @@ pub fn get_ability_definition(ability_id: u32) -> Option<AbilityDefinition> {
             shape: AbilityShape::SingleTarget {
                 max_range: Fixed64::from_f64(20.0),
             },
+            allow_movement: false,
         }),
 
         // Arcane Cleave: Instant, 15 mana, 1.5s cooldown, 45-deg cone (8m), 40 damage
@@ -90,9 +93,10 @@ pub fn get_ability_definition(ability_id: u32) -> Option<AbilityDefinition> {
                 max_distance: Fixed64::from_f64(8.0),
                 max_height: Fixed64::from_f64(3.0),
             },
+            allow_movement: true,
         }),
 
-        // Healing Light: 1.5s cast, 30 mana, 3.0s cooldown, 25m range, 80 heal
+        // Healing Light: 1.5s cast, 30 mana, 3.0s cooldown, 25m range, 80 heal (stationary)
         3 => Some(AbilityDefinition {
             ability_id: 3,
             name: "Healing Light",
@@ -104,6 +108,7 @@ pub fn get_ability_definition(ability_id: u32) -> Option<AbilityDefinition> {
             shape: AbilityShape::SingleTarget {
                 max_range: Fixed64::from_f64(25.0),
             },
+            allow_movement: false,
         }),
 
         // Frost Nova: Instant, 35 mana, 5.0s cooldown, 10m radial sphere, 35 damage
@@ -118,6 +123,22 @@ pub fn get_ability_definition(ability_id: u32) -> Option<AbilityDefinition> {
             shape: AbilityShape::RadiusSphere {
                 radius: Fixed64::from_f64(10.0),
             },
+            allow_movement: true,
+        }),
+
+        // Whirlwind: 1.0s channeled cast, 20 mana, 1.5s cooldown, 6m radius, 50 damage (allows movement)
+        5 => Some(AbilityDefinition {
+            ability_id: 5,
+            name: "Whirlwind",
+            cast_duration_ticks: 20,
+            cooldown_ticks: 30,
+            resource_cost: 20,
+            base_damage: 50,
+            base_heal: 0,
+            shape: AbilityShape::RadiusSphere {
+                radius: Fixed64::from_f64(6.0),
+            },
+            allow_movement: true,
         }),
 
         _ => None,
@@ -155,6 +176,8 @@ pub enum CastState {
         duration_ticks: u32,
         /// Initial caster position when cast started (for movement break checks).
         start_pos: Vec3Fix,
+        /// Whether this active cast permits movement without interrupt.
+        allow_movement: bool,
     },
 }
 
@@ -166,6 +189,7 @@ impl CastState {
         current_tick: u64,
         duration_ticks: u32,
         start_pos: Vec3Fix,
+        allow_movement: bool,
     ) -> Self {
         Self::Casting {
             ability_id,
@@ -173,6 +197,7 @@ impl CastState {
             start_tick: current_tick,
             duration_ticks,
             start_pos,
+            allow_movement,
         }
     }
 
@@ -196,8 +221,17 @@ impl CastState {
     }
 
     /// Validates if movement broke the cast (distance > 0.5m from start_pos).
+    /// Always returns false if `allow_movement` is enabled on the active cast.
     pub fn check_movement_interrupt(&self, current_pos: Vec3Fix) -> bool {
-        if let Self::Casting { start_pos, .. } = *self {
+        if let Self::Casting {
+            start_pos,
+            allow_movement,
+            ..
+        } = *self
+        {
+            if allow_movement {
+                return false;
+            }
             let dist_sq = (current_pos - start_pos).magnitude_squared();
             // 0.5m threshold squared = 0.25 m^2
             dist_sq > Fixed64::from_f64(0.25)
@@ -241,31 +275,31 @@ impl CooldownTracker {
         true
     }
 
-    /// Triggers a cooldown for the specified ability lasting `duration_ticks`.
-    pub fn trigger(&mut self, ability_id: u32, current_tick: u64, duration_ticks: u32) {
-        let ready_at = current_tick + duration_ticks as u64;
+    /// Triggers cooldown duration for an ability, recording readiness tick.
+    pub fn trigger(&mut self, ability_id: u32, current_tick: u64, cooldown_ticks: u32) {
+        let ready_tick = current_tick + cooldown_ticks as u64;
 
-        // 1. If ability is already in table, update ready_at
+        // 1. Update existing slot for ability if present
         for entry in self.entries.iter_mut().flatten() {
             if entry.0 == ability_id {
-                entry.1 = ready_at;
+                entry.1 = ready_tick;
                 return;
             }
         }
 
         // 2. Find empty slot
-        for slot in self.entries.iter_mut() {
+        for slot in &mut self.entries {
             if slot.is_none() {
-                *slot = Some((ability_id, ready_at));
+                *slot = Some((ability_id, ready_tick));
                 return;
             }
         }
 
-        // 3. Reclaim an expired slot if full
-        for slot in self.entries.iter_mut() {
-            if let Some(entry) = slot {
-                if current_tick >= entry.1 {
-                    *slot = Some((ability_id, ready_at));
+        // 3. Fallback: overwrite expired slot
+        for slot in &mut self.entries {
+            if let Some((_, ready_at)) = *slot {
+                if current_tick >= ready_at {
+                    *slot = Some((ability_id, ready_tick));
                     return;
                 }
             }
@@ -273,19 +307,15 @@ impl CooldownTracker {
 
         // 4. Overwrite oldest expiration if table completely saturated with active cooldowns
         if let Some(first) = self.entries.get_mut(0) {
-            *first = Some((ability_id, ready_at));
+            *first = Some((ability_id, ready_tick));
         }
     }
 
-    /// Returns remaining ticks until ability is ready, or 0 if available.
+    /// Returns remaining cooldown duration in simulation ticks (0 if ready).
     pub fn remaining_ticks(&self, ability_id: u32, current_tick: u64) -> u32 {
         for entry in self.entries.iter().flatten() {
             if entry.0 == ability_id {
-                return if entry.1 > current_tick {
-                    (entry.1 - current_tick) as u32
-                } else {
-                    0
-                };
+                return entry.1.saturating_sub(current_tick) as u32;
             }
         }
         0
@@ -305,7 +335,7 @@ mod tests {
     #[test]
     fn test_cast_progression_and_completion() {
         let start_pos = Vec3Fix::from_f64(100.0, 0.0, 100.0);
-        let mut cast = CastState::start_cast(1, 101, 100, 20, start_pos);
+        let mut cast = CastState::start_cast(1, 101, 100, 20, start_pos, false);
 
         // Before completion tick
         assert_eq!(cast.check_completion(110), None);
@@ -323,15 +353,20 @@ mod tests {
     #[test]
     fn test_movement_interrupt() {
         let start_pos = Vec3Fix::from_f64(100.0, 0.0, 100.0);
-        let cast = CastState::start_cast(1, 101, 100, 20, start_pos);
+        let cast = CastState::start_cast(1, 101, 100, 20, start_pos, false);
 
         // Micro-jitter under 0.5m (e.g. 0.2m) does not interrupt
         let slight_move = Vec3Fix::from_f64(100.2, 0.0, 100.0);
         assert!(!cast.check_movement_interrupt(slight_move));
 
-        // Substantial move > 0.5m (e.g. 1.0m) interrupts
+        // Substantial move > 0.5m (e.g. 1.0m) interrupts stationary cast
         let large_move = Vec3Fix::from_f64(101.0, 0.0, 100.0);
         assert!(cast.check_movement_interrupt(large_move));
+
+        // Cast with allow_movement = true does not interrupt on large move (e.g. 15.0m)
+        let mobile_cast = CastState::start_cast(5, 101, 100, 20, start_pos, true);
+        let distant_move = Vec3Fix::from_f64(115.0, 0.0, 100.0);
+        assert!(!mobile_cast.check_movement_interrupt(distant_move));
     }
 
     #[test]

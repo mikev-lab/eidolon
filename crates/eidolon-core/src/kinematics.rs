@@ -528,3 +528,330 @@ impl QuinticHermiteSpline3D {
         Vec3Fix::from_f64(x, y, z)
     }
 }
+
+/// Maximum ground walking speed in meters per second (4.5 m/s).
+pub const MAX_WALK_SPEED: Fixed64 = Fixed64::from_raw((45 * Fixed64::SCALE) / 10);
+
+/// Maximum ground running speed in meters per second (7.5 m/s).
+pub const MAX_RUN_SPEED: Fixed64 = Fixed64::from_raw((75 * Fixed64::SCALE) / 10);
+
+/// Maximum ground sprinting speed in meters per second (10.5 m/s).
+pub const MAX_SPRINT_SPEED: Fixed64 = Fixed64::from_raw((105 * Fixed64::SCALE) / 10);
+
+/// Hard physical speed ceiling for unmounted characters (12.0 m/s), including jitter deadband.
+pub const MAX_GROUND_SPEED_CEILING: Fixed64 = Fixed64::from_raw(12 * Fixed64::SCALE);
+
+/// Standard Earth gravity acceleration (9.80665 m/s^2 downward).
+pub const STANDARD_GRAVITY: Fixed64 = Fixed64::from_raw((980665 * Fixed64::SCALE) / 100000);
+
+/// Upward initial impulse velocity applied on jump (5.0 m/s, yielding ~1.27m apex height).
+pub const JUMP_INITIAL_VELOCITY: Fixed64 = Fixed64::from_raw(5 * Fixed64::SCALE);
+
+/// Maximum simulation ticks an entity can remain airborne without downward velocity before watchdog trips (50 ticks = 2.5s at 20 Hz).
+pub const MAX_AIRBORNE_TICKS: u16 = 50;
+
+/// Classification of a client movement violation detected by server-authoritative validation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MovementViolation {
+    /// No violation detected; velocity is within allowed bounds.
+    None,
+    /// Velocity contained non-finite float values (NaN or Infinity).
+    NonFiniteFloat,
+    /// Velocity exceeded max ground speed and was clamped along its heading direction.
+    OverSpeedClamped {
+        /// Commanded speed in meters/second.
+        requested: f64,
+        /// Maximum allowed speed clamped to.
+        clamped: f64,
+    },
+    /// Severe overspeed exceeding 1.25x max speed, indicating active speed-hacking.
+    BlatantOverspeed {
+        /// Commanded speed in meters/second.
+        requested: f64,
+    },
+    /// Entity exceeded maximum airborne duration without landing, indicating levitation or fly-hacking.
+    LevitationWatchdogTrip {
+        /// Number of continuous airborne simulation ticks.
+        airborne_ticks: u16,
+    },
+}
+
+/// Sanitizes incoming horizontal velocity intent (vx, vz) from a client datagram.
+///
+/// Returns `(sanitized_vx, sanitized_vz, violation)`:
+/// - Rejects non-finite values (NaN / Inf) by zeroing velocity and returning `MovementViolation::NonFiniteFloat`.
+/// - If speed is within `max_speed`, returns exact velocities and `MovementViolation::None`.
+/// - If speed exceeds `max_speed` up to 1.25x, clamps magnitude to `max_speed` preserving heading.
+/// - If speed exceeds 1.25x `max_speed`, flags `MovementViolation::BlatantOverspeed` and zeros velocity.
+pub fn sanitize_velocity_intent(
+    raw_vx: f32,
+    raw_vz: f32,
+    max_speed: Fixed64,
+) -> (Fixed64, Fixed64, MovementViolation) {
+    if !raw_vx.is_finite() || !raw_vz.is_finite() {
+        return (
+            Fixed64::ZERO,
+            Fixed64::ZERO,
+            MovementViolation::NonFiniteFloat,
+        );
+    }
+
+    let vx_f64 = raw_vx as f64;
+    let vz_f64 = raw_vz as f64;
+    let speed_sq = vx_f64 * vx_f64 + vz_f64 * vz_f64;
+    let max_speed_f64 = max_speed.to_f64();
+    let max_speed_sq = max_speed_f64 * max_speed_f64;
+
+    if speed_sq <= max_speed_sq {
+        (
+            Fixed64::from_f64(vx_f64),
+            Fixed64::from_f64(vz_f64),
+            MovementViolation::None,
+        )
+    } else {
+        let speed = speed_sq.sqrt();
+        let blatant_threshold = max_speed_f64 * 1.25;
+
+        // Normalize direction and clamp to max_speed
+        let factor = max_speed_f64 / speed;
+        let clamped_vx = Fixed64::from_f64(vx_f64 * factor);
+        let clamped_vz = Fixed64::from_f64(vz_f64 * factor);
+
+        if speed > blatant_threshold {
+            (
+                Fixed64::ZERO,
+                Fixed64::ZERO,
+                MovementViolation::BlatantOverspeed { requested: speed },
+            )
+        } else {
+            (
+                clamped_vx,
+                clamped_vz,
+                MovementViolation::OverSpeedClamped {
+                    requested: speed,
+                    clamped: max_speed_f64,
+                },
+            )
+        }
+    }
+}
+
+/// Integrates server-authoritative vertical kinematics, applying gravity, floor collision,
+/// jump mechanics, and levitation/fly-hack watchdog enforcement.
+///
+/// Mathematical rules:
+/// - When airborne (position_y > floor_elevation or flags has jumping/falling):
+///   * Increments `airborne_ticks`. If `airborne_ticks > MAX_AIRBORNE_TICKS`, forces `FLAG_FALLING`
+///     and accelerates downward to prevent infinite hovering.
+///   * v_y(t+1) = v_y(t) - g * dt
+///   * y(t+1) = y(t) + v_y * dt
+///   * If y(t+1) <= floor_elevation, snaps to floor, zeroes v_y, resets `airborne_ticks = 0`,
+///     and clears `FLAG_JUMPING` and `FLAG_FALLING`.
+pub fn step_authoritative_vertical_kinematics(
+    position_y: &mut Fixed64,
+    velocity_y: &mut Fixed64,
+    flags: &mut u8,
+    airborne_ticks: &mut u16,
+    floor_elevation: Fixed64,
+    dt: Fixed64,
+) -> MovementViolation {
+    let is_airborne = *position_y > floor_elevation
+        || (*flags & FLAG_JUMPING) != 0
+        || (*flags & FLAG_FALLING) != 0
+        || *velocity_y != Fixed64::ZERO;
+
+    if !is_airborne {
+        *airborne_ticks = 0;
+        return MovementViolation::None;
+    }
+
+    *airborne_ticks = airborne_ticks.saturating_add(1);
+    let mut violation = MovementViolation::None;
+
+    // Levitation watchdog: entity has been airborne too long without landing
+    if *airborne_ticks > MAX_AIRBORNE_TICKS {
+        *flags &= !FLAG_JUMPING;
+        *flags |= FLAG_FALLING;
+        violation = MovementViolation::LevitationWatchdogTrip {
+            airborne_ticks: *airborne_ticks,
+        };
+    }
+
+    // Integrate downward gravity
+    *velocity_y -= STANDARD_GRAVITY * dt;
+    *position_y += *velocity_y * dt;
+
+    // Update falling flag if velocity is downward
+    if *velocity_y < Fixed64::ZERO {
+        *flags &= !FLAG_JUMPING;
+        *flags |= FLAG_FALLING;
+    }
+
+    // Check floor collision
+    if *position_y <= floor_elevation {
+        *position_y = floor_elevation;
+        *velocity_y = Fixed64::ZERO;
+        *airborne_ticks = 0;
+        *flags &= !(FLAG_JUMPING | FLAG_FALLING);
+    }
+
+    violation
+}
+
+/// Triggers an authoritative jump impulse from ground level.
+///
+/// Returns true if the jump was successfully initiated, or false if the entity was already airborne.
+pub fn try_initiate_jump(
+    position_y: Fixed64,
+    velocity_y: &mut Fixed64,
+    flags: &mut u8,
+    airborne_ticks: &mut u16,
+    floor_elevation: Fixed64,
+) -> bool {
+    // Only permit jump if on or very close to the floor (<= 5cm) and not already airborne
+    if position_y <= floor_elevation + Fixed64::from_f64(0.05) && *airborne_ticks == 0 {
+        *velocity_y = JUMP_INITIAL_VELOCITY;
+        *flags |= FLAG_JUMPING;
+        *flags &= !FLAG_FALLING;
+        *airborne_ticks = 1;
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_velocity_intent_sanitization_normal() {
+        let (vx, vz, violation) = sanitize_velocity_intent(4.0, 3.0, MAX_RUN_SPEED);
+        assert_eq!(violation, MovementViolation::None);
+        assert!((vx.to_f64() - 4.0).abs() < 0.001);
+        assert!((vz.to_f64() - 3.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_velocity_intent_sanitization_overspeed_clamped() {
+        // Commanded speed 8.0 m/s when limit is 7.5 m/s (1.066x limit, below 1.25x blatant threshold)
+        let (vx, vz, violation) = sanitize_velocity_intent(8.0, 0.0, MAX_RUN_SPEED);
+        assert!(matches!(
+            violation,
+            MovementViolation::OverSpeedClamped { .. }
+        ));
+        assert!((vx.to_f64() - 7.5).abs() < 0.001);
+        assert_eq!(vz, Fixed64::ZERO);
+    }
+
+    #[test]
+    fn test_velocity_intent_sanitization_blatant_speed_hack() {
+        // Commanded speed 100.0 m/s (severe speed hack)
+        let (vx, vz, violation) = sanitize_velocity_intent(100.0, 0.0, MAX_RUN_SPEED);
+        assert!(matches!(
+            violation,
+            MovementViolation::BlatantOverspeed { .. }
+        ));
+        assert_eq!(vx, Fixed64::ZERO);
+        assert_eq!(vz, Fixed64::ZERO);
+    }
+
+    #[test]
+    fn test_velocity_intent_sanitization_nan_and_inf() {
+        let (vx, vz, v1) = sanitize_velocity_intent(f32::NAN, 5.0, MAX_RUN_SPEED);
+        assert_eq!(v1, MovementViolation::NonFiniteFloat);
+        assert_eq!(vx, Fixed64::ZERO);
+        assert_eq!(vz, Fixed64::ZERO);
+
+        let (vx2, vz2, v2) = sanitize_velocity_intent(5.0, f32::INFINITY, MAX_RUN_SPEED);
+        assert_eq!(v2, MovementViolation::NonFiniteFloat);
+        assert_eq!(vx2, Fixed64::ZERO);
+        assert_eq!(vz2, Fixed64::ZERO);
+    }
+
+    #[test]
+    fn test_vertical_kinematics_gravity_parabola_and_landing() {
+        let mut pos_y = Fixed64::ZERO;
+        let mut vel_y = Fixed64::ZERO;
+        let mut flags = 0u8;
+        let mut airborne_ticks = 0u16;
+        let floor_y = Fixed64::ZERO;
+        let dt = Fixed64::from_f64(0.050); // 50ms = 20 Hz
+
+        // Jump initiated from ground
+        assert!(try_initiate_jump(
+            pos_y,
+            &mut vel_y,
+            &mut flags,
+            &mut airborne_ticks,
+            floor_y
+        ));
+        assert_eq!(flags, FLAG_JUMPING);
+        assert_eq!(airborne_ticks, 1);
+        assert_eq!(vel_y, JUMP_INITIAL_VELOCITY);
+
+        let mut peak_y = Fixed64::ZERO;
+        let mut reached_apex = false;
+
+        // Step simulation through jump trajectory
+        for _ in 0..40 {
+            step_authoritative_vertical_kinematics(
+                &mut pos_y,
+                &mut vel_y,
+                &mut flags,
+                &mut airborne_ticks,
+                floor_y,
+                dt,
+            );
+            if pos_y > peak_y {
+                peak_y = pos_y;
+            }
+            if vel_y <= Fixed64::ZERO {
+                reached_apex = true;
+                if pos_y > floor_y {
+                    assert_eq!(flags & FLAG_FALLING, FLAG_FALLING);
+                }
+            }
+        }
+
+        assert!(reached_apex, "Jump must reach an apex");
+        assert!(
+            peak_y.to_f64() > 1.0 && peak_y.to_f64() < 1.5,
+            "Apex height must be ~1.27m"
+        );
+        assert_eq!(pos_y, floor_y, "Entity must land back at floor level");
+        assert_eq!(
+            vel_y,
+            Fixed64::ZERO,
+            "Vertical velocity must reset on floor landing"
+        );
+        assert_eq!(flags, 0, "Flags must be cleared upon landing");
+        assert_eq!(airborne_ticks, 0, "Airborne ticks must reset on landing");
+    }
+
+    #[test]
+    fn test_vertical_kinematics_levitation_watchdog() {
+        let mut pos_y = Fixed64::from_i32(10); // Suspended 10m in the air
+        let mut vel_y = Fixed64::ZERO;
+        let mut flags = FLAG_JUMPING;
+        let mut airborne_ticks = MAX_AIRBORNE_TICKS + 1; // Already exceeded max airborne ticks
+        let floor_y = Fixed64::ZERO;
+        let dt = Fixed64::from_f64(0.050);
+
+        let violation = step_authoritative_vertical_kinematics(
+            &mut pos_y,
+            &mut vel_y,
+            &mut flags,
+            &mut airborne_ticks,
+            floor_y,
+            dt,
+        );
+
+        assert!(matches!(
+            violation,
+            MovementViolation::LevitationWatchdogTrip { .. }
+        ));
+        assert_eq!(flags & FLAG_FALLING, FLAG_FALLING);
+        assert_eq!(flags & FLAG_JUMPING, 0);
+    }
+}
