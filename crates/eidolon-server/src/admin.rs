@@ -282,9 +282,9 @@ fn run_http_listener(
                 let _ = stream.set_nonblocking(false);
                 let bridge_ref = Arc::clone(&bridge);
                 let token_ref = expected_token.clone();
-                // Handle request synchronously on short connection timeout
-                let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-                let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+                // Handle request synchronously on timeout
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
+                let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
                 handle_http_connection(stream, &bridge_ref, token_ref.as_deref());
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -352,7 +352,7 @@ fn handle_http_connection(
             if lower.starts_with("authorization:") {
                 let auth_val = line[14..].trim();
                 if let Some(bearer) = auth_val.strip_prefix("Bearer ") {
-                    if bearer == token {
+                    if constant_time_eq_str(bearer, token) {
                         is_authenticated = true;
                         break;
                     }
@@ -599,10 +599,12 @@ fn write_http_response(
         body.len()
     );
 
-    stream.write_all(header.as_bytes())?;
-    stream.write_all(body)?;
+    let mut response_buf = Vec::with_capacity(header.len() + body.len());
+    response_buf.extend_from_slice(header.as_bytes());
+    response_buf.extend_from_slice(body);
+    stream.write_all(&response_buf)?;
     stream.flush()?;
-    let _ = stream.shutdown(std::net::Shutdown::Both);
+    let _ = stream.shutdown(std::net::Shutdown::Write);
     Ok(())
 }
 
@@ -610,7 +612,7 @@ fn write_cors_preflight_response(stream: &mut TcpStream) -> Result<(), std::io::
     let header = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: Authorization, Content-Type\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Max-Age: 86400\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     stream.write_all(header.as_bytes())?;
     stream.flush()?;
-    let _ = stream.shutdown(std::net::Shutdown::Both);
+    let _ = stream.shutdown(std::net::Shutdown::Write);
     Ok(())
 }
 
@@ -649,6 +651,19 @@ fn extract_json_float_field(json: &str, field: &str) -> Option<f64> {
     }
 
     after_colon[..end_idx].parse::<f64>().ok()
+}
+
+fn constant_time_eq_str(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (&x, &y) in a_bytes.iter().zip(b_bytes.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 #[cfg(test)]
@@ -725,21 +740,21 @@ mod tests {
         // 1. Unauthenticated request must return 401
         let mut stream = TcpStream::connect(addr).expect("Connect");
         stream
-            .write_all(b"GET /api/status HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .write_all(b"GET /api/status HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
             .expect("Send");
-        let mut resp = [0u8; 512];
-        let n = stream.read(&mut resp).expect("Read");
-        let resp_str = std::str::from_utf8(&resp[..n]).expect("UTF8");
+        let mut resp = Vec::new();
+        let _ = stream.read_to_end(&mut resp);
+        let resp_str = String::from_utf8_lossy(&resp);
         assert!(resp_str.starts_with("HTTP/1.1 401 Unauthorized"));
 
         // 2. Authenticated request with Bearer token must return 200 OK
         let mut stream = TcpStream::connect(addr).expect("Connect");
         stream
-            .write_all(b"GET /api/status HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer secret-key-123\r\n\r\n")
+            .write_all(b"GET /api/status HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer secret-key-123\r\nConnection: close\r\n\r\n")
             .expect("Send");
-        let mut resp = [0u8; 1024];
-        let n = stream.read(&mut resp).expect("Read");
-        let resp_str = std::str::from_utf8(&resp[..n]).expect("UTF8");
+        let mut resp = Vec::new();
+        let _ = stream.read_to_end(&mut resp);
+        let resp_str = String::from_utf8_lossy(&resp);
         assert!(resp_str.starts_with("HTTP/1.1 200 OK"));
         assert!(resp_str.contains("\"ccu\":42"));
         assert!(resp_str.contains("\"uptime_secs\":120"));
@@ -747,11 +762,13 @@ mod tests {
         // 3. CORS preflight OPTIONS must return 204
         let mut stream = TcpStream::connect(addr).expect("Connect");
         stream
-            .write_all(b"OPTIONS /api/status HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .write_all(
+                b"OPTIONS /api/status HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            )
             .expect("Send");
-        let mut resp = [0u8; 512];
-        let n = stream.read(&mut resp).expect("Read");
-        let resp_str = std::str::from_utf8(&resp[..n]).expect("UTF8");
+        let mut resp = Vec::new();
+        let _ = stream.read_to_end(&mut resp);
+        let resp_str = String::from_utf8_lossy(&resp);
         assert!(resp_str.starts_with("HTTP/1.1 204 No Content"));
 
         server.stop();

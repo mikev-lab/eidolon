@@ -93,7 +93,17 @@ fn test_milestone_14_3_child_process_sigkill_and_durable_recovery() {
         ProcessSupervisor::spawn_worker(0, &journal_path).expect("Spawn child worker");
 
     // 2. Allow child process time to initialize and sync initial transactions to disk
-    std::thread::sleep(Duration::from_millis(150));
+    let start = std::time::Instant::now();
+    while start.elapsed() < Duration::from_secs(3) {
+        if let Ok(metadata) = std::fs::metadata(&journal_path) {
+            if metadata.len() > 0 {
+                // Brief pause to allow physical flush to complete
+                std::thread::sleep(Duration::from_millis(50));
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 
     // 3. Abruptly kill the worker process using POSIX SIGKILL (kill -9)
     supervisor

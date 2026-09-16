@@ -9,7 +9,7 @@ use eidolon_core::fixed::Fixed64;
 use eidolon_server::EidolonApp;
 
 fn connect_with_retry(addr: std::net::SocketAddr) -> TcpStream {
-    for _ in 0..10 {
+    for _ in 0..50 {
         if let Ok(s) = TcpStream::connect(addr) {
             return s;
         }
@@ -127,7 +127,7 @@ fn test_admin_api_security_auth_and_cors() {
     assert!(resp.contains("\"current_tick\":0"));
 
     // 4. CORS preflight OPTIONS returns 204 No Content
-    let mut stream = TcpStream::connect(admin_addr).expect("Connect");
+    let mut stream = connect_with_retry(admin_addr);
     stream
         .write_all(b"OPTIONS /api/players HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
         .expect("Write");

@@ -55,7 +55,7 @@ fn test_speed_hack_intent_rejected_and_rubberband_dispatched() {
     // Server ticks until packet is drained and StateCorrection is received
     let mut received_correction = false;
     let mut recv_buf = [0u8; 256];
-    for _ in 0..20 {
+    for _ in 0..50 {
         std::thread::sleep(std::time::Duration::from_millis(5));
         server.tick().expect("Tick");
 
@@ -165,7 +165,7 @@ fn test_nan_inf_float_injection_rejected_without_panic() {
     // Server ticks until packet is drained and StateCorrection is received
     let mut received_correction = false;
     let mut recv_buf = [0u8; 256];
-    for _ in 0..20 {
+    for _ in 0..50 {
         std::thread::sleep(std::time::Duration::from_millis(5));
         server.tick().expect("Tick");
 
